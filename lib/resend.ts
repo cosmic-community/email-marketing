@@ -47,7 +47,7 @@ export async function sendBulkEmail(options: BulkEmailOptions): Promise<SendResu
         to: [email.to],
         subject: email.subject,
         html: htmlWithTracking,
-        replyTo: replyTo || from,
+        reply_to: replyTo || from, // Fixed: Changed 'replyTo' to 'reply_to'
       })
 
       if (result.data?.id) {

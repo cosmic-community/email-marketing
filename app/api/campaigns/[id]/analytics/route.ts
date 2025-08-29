@@ -85,14 +85,23 @@ export async function GET(
 function generateTimelineData(events: AnalyticsEvent[]) {
   // Group events by date
   const timelineData = events.reduce((acc: Record<string, { opens: number; clicks: number }>, event: AnalyticsEvent) => {
-    const date = event.timestamp.split('T')[0]
+    const dateResult = event.timestamp.split('T')[0]
+    if (!dateResult) {
+      return acc // Skip events with invalid timestamps
+    }
+    
+    const date = dateResult
     if (!acc[date]) {
       acc[date] = { opens: 0, clicks: 0 }
     }
-    if (event.type === 'open') {
-      acc[date].opens++
-    } else if (event.type === 'click') {
-      acc[date].clicks++
+    
+    const dayData = acc[date]
+    if (dayData) { // Add null check for dayData
+      if (event.type === 'open') {
+        dayData.opens++
+      } else if (event.type === 'click') {
+        dayData.clicks++
+      }
     }
     return acc
   }, {})
@@ -113,11 +122,15 @@ async function getTopPerformers(events: AnalyticsEvent[]) {
       if (contactId && !acc[contactId]) {
         acc[contactId] = { opens: 0, clicks: 0 }
       }
-      if (contactId) {
-        if (event.type === 'open') {
-          acc[contactId].opens++
-        } else if (event.type === 'click') {
-          acc[contactId].clicks++
+      
+      if (contactId && acc[contactId]) { // Add null check for acc[contactId]
+        const engagement = acc[contactId]
+        if (engagement) { // Additional safety check
+          if (event.type === 'open') {
+            engagement.opens++
+          } else if (event.type === 'click') {
+            engagement.clicks++
+          }
         }
       }
       return acc

@@ -1,17 +1,8 @@
 'use client'
 
-import { useState, useTransition, useRef } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmailTemplate, TemplateType } from '@/types'
-import { AlertCircle, Sparkles, CheckCircle, Info } from 'lucide-react'
 
 interface EditTemplateFormProps {
   template: EmailTemplate
@@ -19,480 +10,265 @@ interface EditTemplateFormProps {
 
 export default function EditTemplateForm({ template }: EditTemplateFormProps) {
   const router = useRouter()
-  const [isPending, startTransition] = useTransition()
-  const [isAIEditing, setIsAIEditing] = useState(false)
-  const [aiPrompt, setAiPrompt] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
-  const [activeTab, setActiveTab] = useState('preview')
-  const [showSuccessToast, setShowSuccessToast] = useState(false)
-  const [streamingContent, setStreamingContent] = useState('')
-  const [aiStatus, setAiStatus] = useState('')
-  const [aiProgress, setAiProgress] = useState(0)
-
-  // Form state
+  const [hasGeneratedContent, setHasGeneratedContent] = useState(false)
+  
   const [formData, setFormData] = useState({
-    name: template.metadata.name,
-    subject: template.metadata.subject,
-    content: template.metadata.content,
-    template_type: template.metadata.template_type.value as TemplateType,
-    active: template.metadata.active
+    name: template.metadata?.name || '',
+    subject: template.metadata?.subject || '',
+    content: template.metadata?.content || '',
+    template_type: (template.metadata?.template_type?.value || 'Newsletter') as TemplateType,
+    active: template.metadata?.active ?? true
   })
 
-  const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }))
-    setError('')
-    setSuccess('')
-  }
-
-  const showToast = () => {
-    setShowSuccessToast(true)
-    setTimeout(() => {
-      setShowSuccessToast(false)
-    }, 3000)
-  }
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false)
 
   const handleAIEdit = async () => {
-    if (!aiPrompt.trim()) {
-      setError('Please provide instructions for AI editing')
-      return
-    }
-
-    // Fixed: Add proper null check for template.id
-    if (!template.id) {
-      setError('Template ID is missing')
-      return
-    }
-
-    setIsAIEditing(true)
+    if (!aiPrompt.trim()) return
+    
+    setIsGeneratingAI(true)
     setError('')
-    setSuccess('')
-    setStreamingContent('')
-    setAiStatus('Starting AI editing...')
-    setAiProgress(0)
     
     try {
-      // Create the request body with guaranteed string templateId
-      const requestBody = {
-        templateId: template.id, // Now safely guaranteed to be a string
-        currentContent: formData.content,
-        currentSubject: formData.subject,
-        prompt: aiPrompt
-      }
-
       const response = await fetch('/api/templates/edit-ai', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          current_content: formData.content,
+          current_subject: formData.subject,
+          edit_prompt: aiPrompt,
+          template_type: formData.template_type
+        }),
       })
 
+      const result = await response.json()
+      
       if (!response.ok) {
-        throw new Error('Failed to start AI editing')
+        throw new Error(result.error || 'Failed to edit template with AI')
       }
 
-      if (!response.body) {
-        throw new Error('No response body')
-      }
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let accumulatedContent = ''
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          
-          if (done) break
-          
-          const chunk = decoder.decode(value, { stream: true })
-          const lines = chunk.split('\n')
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6))
-                
-                if (data.type === 'status') {
-                  setAiStatus(data.message)
-                  setAiProgress(data.progress || 0)
-                } else if (data.type === 'content') {
-                  accumulatedContent += data.text
-                  setStreamingContent(accumulatedContent)
-                  setFormData(prev => ({
-                    ...prev,
-                    content: accumulatedContent
-                  }))
-                } else if (data.type === 'complete') {
-                  setFormData(prev => ({
-                    ...prev,
-                    content: data.data.content,
-                    subject: data.data.subject || prev.subject
-                  }))
-                  setAiPrompt('')
-                  setAiStatus('Editing complete!')
-                  setAiProgress(100)
-                  setSuccess('Template updated with AI suggestions!')
-                  showToast()
-                } else if (data.type === 'error') {
-                  throw new Error(data.error)
-                }
-              } catch (parseError) {
-                console.warn('Failed to parse SSE data:', parseError)
-              }
-            }
-          }
-        }
-      } finally {
-        reader.releaseLock()
-      }
-
-    } catch (error) {
-      console.error('AI edit error:', error)
-      setError(error instanceof Error ? error.message : 'Failed to edit template with AI')
-      setAiStatus('Editing failed')
+      setFormData(prev => ({
+        ...prev,
+        content: result.content,
+        subject: result.subject || prev.subject
+      }))
+      
+      // Hide the generator after first generation
+      setHasGeneratedContent(true)
+      setAiPrompt('')
+      
+    } catch (err) {
+      console.error('AI Edit error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to edit template with AI')
     } finally {
-      setIsAIEditing(false)
-      setTimeout(() => {
-        setAiStatus('')
-        setAiProgress(0)
-      }, 2000)
+      setIsGeneratingAI(false)
     }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    setSuccess('')
+    setIsLoading(true)
 
-    if (!formData.name.trim()) {
-      setError('Template name is required')
-      return
-    }
+    try {
+      const response = await fetch(`/api/templates/${template.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      })
 
-    if (!formData.subject.trim()) {
-      setError('Subject line is required')
-      return
-    }
-
-    if (!formData.content.trim()) {
-      setError('Email content is required')
-      return
-    }
-
-    // Fixed: Add null check for template.id before making API call
-    if (!template.id) {
-      setError('Template ID is missing')
-      return
-    }
-
-    startTransition(async () => {
-      try {
-        // template.id is now safely guaranteed to be a string due to the check above
-        const response = await fetch(`/api/templates/${template.id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            name: formData.name.trim(),
-            subject: formData.subject.trim(),
-            content: formData.content,
-            template_type: formData.template_type,
-            active: formData.active
-          }),
-        })
-
-        if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.error || 'Failed to update template')
-        }
-
-        setSuccess('Template updated successfully!')
-        showToast()
-        
-        // Redirect to templates list after a short delay
-        setTimeout(() => {
-          router.push('/templates')
-        }, 1500)
-
-      } catch (error) {
-        console.error('Update error:', error)
-        setError(error instanceof Error ? error.message : 'Failed to update template')
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to update template')
       }
-    })
+
+      router.push('/templates')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update template. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleStartOver = () => {
+    setHasGeneratedContent(false)
+    setAiPrompt('')
   }
 
   return (
-    <div className="space-y-6">
-      {/* Success Toast */}
-      {showSuccessToast && (
-        <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg flex items-center space-x-2 animate-in slide-in-from-top-2">
-          <CheckCircle className="h-5 w-5" />
-          <span>AI editing completed successfully!</span>
-        </div>
-      )}
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md">
+            <p className="text-red-600">{error}</p>
+          </div>
+        )}
 
-      {/* Unsubscribe Notice */}
-      <div className="flex items-start space-x-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-        <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-        <div>
-          <p className="text-blue-800 font-medium">Automatic Unsubscribe Links</p>
-          <p className="text-blue-700 text-sm">
-            All emails sent through campaigns will automatically include an unsubscribe link in the footer. 
-            Recipients can easily opt out of future communications with one click.
-          </p>
-        </div>
-      </div>
-
-      {/* 2-Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* Left Column: AI Content Editor */}
-        <div className="space-y-6">
-          <Card className="border-purple-200 bg-purple-50/50">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2 text-purple-800">
-                <Sparkles className="h-5 w-5" />
-                <span>AI Content Editor</span>
-              </CardTitle>
-              <p className="text-purple-700 text-sm">
-                How should we improve the current content?
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Textarea
-                  placeholder="Describe how you'd like to modify the template (e.g., 'Make cosmic blue, like the cosmic cms website', 'Add a call-to-action button', 'Change the tone to be more casual')"
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  className="min-h-[100px] resize-none"
-                  disabled={isAIEditing}
-                />
+        {/* AI Content Editor */}
+        <div className="card mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center">
+              <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center mr-3">
+                <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
               </div>
-              
-              {/* AI Edit Status Display */}
-              {(isAIEditing && aiStatus) && (
-                <div className="p-3 bg-purple-100 border border-purple-200 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-purple-800">{aiStatus}</span>
-                    <span className="text-xs text-purple-600">{aiProgress}%</span>
-                  </div>
-                  <div className="w-full bg-purple-200 rounded-full h-2">
-                    <div 
-                      className="bg-purple-600 h-2 rounded-full transition-all duration-300" 
-                      style={{ width: `${aiProgress}%` }}
-                    ></div>
-                  </div>
-                </div>
-              )}
-              
-              <Button 
-                onClick={handleAIEdit}
-                disabled={isAIEditing || !aiPrompt.trim()}
-                className="w-full bg-purple-600 hover:bg-purple-700 text-white"
-              >
-                {isAIEditing ? (
-                  <>
-                    <Sparkles className="mr-2 h-4 w-4 animate-spin" />
-                    Editing with AI...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    Edit with AI
-                  </>
-                )}
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Error/Success Messages for AI */}
-          {error && (
-            <div className="flex items-center space-x-2 p-4 bg-red-50 border border-red-200 rounded-md">
-              <AlertCircle className="h-5 w-5 text-red-600" />
-              <p className="text-red-600">{error}</p>
+              <h2 className="text-xl font-semibold text-gray-900">AI Content Editor</h2>
             </div>
-          )}
+            {hasGeneratedContent && (
+              <button
+                type="button"
+                onClick={handleStartOver}
+                className="text-sm text-gray-500 hover:text-gray-700 underline"
+              >
+                Start Over
+              </button>
+            )}
+          </div>
+          <p className="text-gray-600 mb-6">How should we improve the current content?</p>
+          
+          <div className="space-y-4">
+            <textarea
+              className="form-textarea"
+              rows={3}
+              placeholder="e.g., 'Make it cosmic blue like the Cosmic CMS website', 'Add a call-to-action button'"
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+            />
+            
+            <button
+              type="button"
+              onClick={handleAIEdit}
+              disabled={isGeneratingAI || !aiPrompt.trim()}
+              className="btn-secondary flex items-center"
+            >
+              {isGeneratingAI ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Editing with AI...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Edit with AI
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
-        {/* Right Column: Preview / Edit */}
-        <div className="space-y-6">
-          <Card>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="preview">Preview</TabsTrigger>
-                <TabsTrigger value="edit">Edit</TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="preview" className="mt-6 p-6">
-                <div className="space-y-6">
-                  <div className="border-b pb-4">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">Email Preview</h3>
-                    <p className="text-sm text-gray-600">
-                      This is how your email will appear to recipients (unsubscribe link will be added automatically)
-                    </p>
-                  </div>
-                  
-                  <div className="bg-white border border-gray-300 rounded-lg shadow-sm">
-                    <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm text-gray-600">
-                          <strong>Subject:</strong> {formData.subject || 'No subject'}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {formData.template_type}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="p-6 max-h-96 overflow-y-auto">
-                      <div 
-                        className="prose max-w-none"
-                        dangerouslySetInnerHTML={{ 
-                          __html: formData.content || '<p className="text-gray-500">No content</p>' 
-                        }} 
-                      />
-                      {/* Preview unsubscribe footer */}
-                      {formData.content && (
-                        <div className="mt-8 pt-4 border-t border-gray-200 text-center text-xs text-gray-500">
-                          <p>
-                            You received this email because you subscribed to our mailing list.
-                            <br />
-                            <span className="underline cursor-pointer">Unsubscribe</span> from future emails.
-                          </p>
-                          <p className="text-xs text-gray-400 mt-1">
-                            ↑ This unsubscribe link will be added automatically to all campaign emails
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
+        {/* Main Template Form */}
+        <div className="card">
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">Edit Template</h2>
 
-              <TabsContent value="edit" className="mt-6 p-6">
-                <form onSubmit={handleSubmit} className="space-y-6">
-                  {/* Template Name */}
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Template Name *</Label>
-                    <Input
-                      id="name"
-                      type="text"
-                      value={formData.name}
-                      onChange={(e) => handleInputChange('name', e.target.value)}
-                      placeholder="Enter template name"
-                      disabled={isPending}
-                      required
-                    />
-                  </div>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+                Template Name
+              </label>
+              <input
+                type="text"
+                id="name"
+                required
+                className="form-input"
+                value={formData.name}
+                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                placeholder="Enter template name"
+              />
+            </div>
 
-                  {/* Template Type */}
-                  <div className="space-y-2">
-                    <Label htmlFor="template_type">Template Type</Label>
-                    <Select 
-                      value={formData.template_type} 
-                      onValueChange={(value) => handleInputChange('template_type', value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select template type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Welcome Email">Welcome Email</SelectItem>
-                        <SelectItem value="Newsletter">Newsletter</SelectItem>
-                        <SelectItem value="Promotional">Promotional</SelectItem>
-                        <SelectItem value="Transactional">Transactional</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+            <div>
+              <label htmlFor="subject" className="block text-sm font-medium text-gray-700 mb-2">
+                Email Subject
+              </label>
+              <input
+                type="text"
+                id="subject"
+                required
+                className="form-input"
+                value={formData.subject}
+                onChange={(e) => setFormData(prev => ({ ...prev, subject: e.target.value }))}
+                placeholder="Enter email subject line"
+              />
+            </div>
 
-                  {/* Subject Line */}
-                  <div className="space-y-2">
-                    <Label htmlFor="subject">Email Subject *</Label>
-                    <Input
-                      id="subject"
-                      type="text"
-                      value={formData.subject}
-                      onChange={(e) => handleInputChange('subject', e.target.value)}
-                      placeholder="Enter email subject line"
-                      disabled={isPending}
-                      required
-                    />
-                  </div>
+            <div>
+              <label htmlFor="template_type" className="block text-sm font-medium text-gray-700 mb-2">
+                Template Type
+              </label>
+              <select
+                id="template_type"
+                className="form-input"
+                value={formData.template_type}
+                onChange={(e) => setFormData(prev => ({ ...prev, template_type: e.target.value as TemplateType }))}
+              >
+                <option value="Newsletter">Newsletter</option>
+                <option value="Welcome Email">Welcome Email</option>
+                <option value="Promotional">Promotional</option>
+                <option value="Transactional">Transactional</option>
+              </select>
+            </div>
 
-                  {/* Email Content */}
-                  <div className="space-y-2">
-                    <Label htmlFor="content">Email Content *</Label>
-                    <Textarea
-                      id="content"
-                      value={formData.content}
-                      onChange={(e) => handleInputChange('content', e.target.value)}
-                      placeholder="Enter email content (HTML supported)"
-                      rows={8}
-                      disabled={isPending}
-                      required
-                    />
-                    <p className="text-sm text-gray-500">
-                      You can use HTML tags and merge fields like {'{{first_name}}'} for personalization.
-                      An unsubscribe link will be automatically added to all campaign emails.
-                    </p>
-                  </div>
+            <div>
+              <label htmlFor="content" className="block text-sm font-medium text-gray-700 mb-2">
+                Email Content (HTML)
+              </label>
+              <textarea
+                id="content"
+                required
+                rows={12}
+                className="form-textarea"
+                value={formData.content}
+                onChange={(e) => setFormData(prev => ({ ...prev, content: e.target.value }))}
+                placeholder="Enter your HTML email content..."
+              />
+              <p className="text-sm text-gray-500 mt-2">
+                Use template variables like {`{{first_name}}`} and {`{{last_name}}`} for personalization.
+              </p>
+            </div>
 
-                  {/* Active Toggle */}
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div className="space-y-1">
-                      <Label htmlFor="active" className="text-base font-medium">
-                        Active Template
-                      </Label>
-                      <p className="text-sm text-gray-600">
-                        Active templates are available for creating campaigns
-                      </p>
-                    </div>
-                    <Switch
-                      id="active"
-                      checked={formData.active}
-                      onCheckedChange={(checked) => handleInputChange('active', checked)}
-                      disabled={isPending}
-                    />
-                  </div>
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="active"
+                className="form-checkbox"
+                checked={formData.active}
+                onChange={(e) => setFormData(prev => ({ ...prev, active: e.target.checked }))}
+              />
+              <label htmlFor="active" className="ml-2 text-sm text-gray-700">
+                Template is active and ready to use
+              </label>
+            </div>
 
-                  {/* Success Messages */}
-                  {success && (
-                    <div className="flex items-center space-x-2 p-4 bg-green-50 border border-green-200 rounded-md">
-                      <div className="h-5 w-5 rounded-full bg-green-600 flex items-center justify-center">
-                        <svg className="h-3 w-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                      <p className="text-green-600">{success}</p>
-                    </div>
-                  )}
-
-                  {/* Form Actions */}
-                  <div className="flex space-x-4 pt-6">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => router.back()}
-                      disabled={isPending}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="submit"
-                      disabled={isPending}
-                      className="bg-slate-800 hover:bg-slate-900 text-white"
-                    >
-                      {isPending ? 'Updating...' : 'Update Template'}
-                    </Button>
-                  </div>
-                </form>
-              </TabsContent>
-            </Tabs>
-          </Card>
+            <div className="flex space-x-4 pt-6 border-t border-gray-200">
+              <button
+                type="button"
+                onClick={() => router.back()}
+                className="btn-secondary"
+                disabled={isLoading}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={isLoading}
+              >
+                {isLoading ? 'Updating...' : 'Update Template'}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>

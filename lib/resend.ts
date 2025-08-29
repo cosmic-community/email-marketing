@@ -34,12 +34,12 @@ export async function sendBulkEmail(options: BulkEmailOptions): Promise<SendResu
       
       // Add open tracking pixel if campaign ID is provided
       if (campaignId && email.contactId) {
-        const trackingPixel = `<img src="${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/tracking/open/${campaignId}/${email.contactId}" width="1" height="1" style="display:none;" alt="" />`
+        const trackingPixel = `<img src="${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/tracking/open/${campaignId}/${email.contactId}" width="1" height="1" style="display:none;" alt="" />`
         htmlWithTracking += trackingPixel
       }
       
       // Add unsubscribe link
-      const unsubscribeUrl = `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/unsubscribe?email=${encodeURIComponent(email.to)}&campaign=${campaignId || ''}`
+      const unsubscribeUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/unsubscribe?email=${encodeURIComponent(email.to)}&campaign=${campaignId || ''}`
       htmlWithTracking += `<br><br><small><a href="${unsubscribeUrl}">Unsubscribe</a></small>`
 
       const result = await resend.emails.send({

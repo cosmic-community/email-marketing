@@ -76,7 +76,15 @@ export interface CampaignStats {
   click_rate?: string;
 }
 
-// Marketing Campaign interface - Updated to include template snapshot
+// Batch processing error log entry
+export interface BatchErrorLog {
+  timestamp: string;
+  batch: number;
+  error: string;
+  retry_count: number;
+}
+
+// Marketing Campaign interface - Updated with batch processing fields
 export interface MarketingCampaign extends CosmicObject {
   type: 'marketing-campaigns';
   metadata: {
@@ -88,10 +96,23 @@ export interface MarketingCampaign extends CosmicObject {
     target_tags?: string[];
     status: {
       key: string;
-      value: 'Draft' | 'Scheduled' | 'Sent' | 'Cancelled';
+      value: 'Draft' | 'Scheduled' | 'Sending' | 'Paused' | 'Sent' | 'Cancelled';
     };
     send_date?: string;
     stats?: CampaignStats;
+    // Batch processing fields
+    batch_size?: number;
+    batch_delay_minutes?: number;
+    total_recipients?: number;
+    current_batch?: number;
+    last_batch_sent_at?: string;
+    priority?: {
+      key: string;
+      value: 'Low' | 'Normal' | 'High';
+    };
+    max_retry_attempts?: number;
+    retry_count?: number;
+    error_log?: BatchErrorLog[];
   };
 }
 
@@ -107,10 +128,23 @@ export interface EmailCampaign extends CosmicObject {
     target_tags?: string[];
     status: {
       key: string;
-      value: 'Draft' | 'Scheduled' | 'Sent' | 'Cancelled';
+      value: 'Draft' | 'Scheduled' | 'Sending' | 'Paused' | 'Sent' | 'Cancelled';
     };
     send_date?: string;
     stats?: CampaignStats;
+    // Batch processing fields
+    batch_size?: number;
+    batch_delay_minutes?: number;
+    total_recipients?: number;
+    current_batch?: number;
+    last_batch_sent_at?: string;
+    priority?: {
+      key: string;
+      value: 'Low' | 'Normal' | 'High';
+    };
+    max_retry_attempts?: number;
+    retry_count?: number;
+    error_log?: BatchErrorLog[];
   };
 }
 
@@ -183,6 +217,9 @@ export interface CreateCampaignData {
   contact_ids?: string[];
   target_tags?: string[];
   send_date?: string;
+  batch_size?: number;
+  batch_delay_minutes?: number;
+  priority?: 'Low' | 'Normal' | 'High';
 }
 
 export interface UpdateSettingsData {

@@ -1,4 +1,7 @@
 // app/campaigns/[id]/page.tsx
+'use client'
+
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getMarketingCampaign, getEmailTemplates, getEmailContacts } from '@/lib/cosmic'
@@ -7,23 +10,87 @@ import SendCampaignButton from '@/components/SendCampaignButton'
 import DeleteCampaignButton from '@/components/DeleteCampaignButton'
 import TestEmailModal from '@/components/TestEmailModal'
 import { MarketingCampaign, EmailTemplate, EmailContact } from '@/types'
-
-// Force dynamic rendering
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
+import { Button } from '@/components/ui/button'
+import { Mail } from 'lucide-react'
 
 interface PageProps {
   params: Promise<{ id: string }>
 }
 
-export default async function CampaignDetailsPage({ params }: PageProps) {
-  const { id } = await params
-  
-  const [campaign, templates, contacts] = await Promise.all([
-    getMarketingCampaign(id),
-    getEmailTemplates(),
-    getEmailContacts()
-  ])
+export default function CampaignDetailsPage({ params }: PageProps) {
+  const [campaign, setCampaign] = useState<MarketingCampaign | null>(null)
+  const [templates, setTemplates] = useState<EmailTemplate[]>([])
+  const [contacts, setContacts] = useState<EmailContact[]>([])
+  const [isTestModalOpen, setIsTestModalOpen] = useState(false)
+  const [isTestEmailLoading, setIsTestEmailLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const resolvedParams = await params
+        const { id } = resolvedParams
+        
+        const [campaignData, templatesData, contactsData] = await Promise.all([
+          getMarketingCampaign(id),
+          getEmailTemplates(),
+          getEmailContacts()
+        ])
+
+        if (!campaignData) {
+          notFound()
+        }
+
+        setCampaign(campaignData)
+        setTemplates(templatesData)
+        setContacts(contactsData)
+      } catch (error) {
+        console.error('Failed to load campaign data:', error)
+        notFound()
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadData()
+  }, [params])
+
+  const handleSendTestEmail = async (emails: string[]) => {
+    if (!campaign) return
+
+    setIsTestEmailLoading(true)
+    try {
+      const response = await fetch(`/api/campaigns/${campaign.id}/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ test_emails: emails }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.message || 'Failed to send test email')
+      }
+
+      // Success is handled by the modal component
+    } catch (error) {
+      throw error // Re-throw so the modal can handle it
+    } finally {
+      setIsTestEmailLoading(false)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading campaign...</p>
+        </div>
+      </div>
+    )
+  }
 
   if (!campaign) {
     notFound()
@@ -95,6 +162,17 @@ export default async function CampaignDetailsPage({ params }: PageProps) {
     (campaign.metadata?.template && typeof campaign.metadata.template === 'object')
   )
 
+  // Get template name for the modal
+  const getTemplateName = (): string => {
+    if (campaign.metadata?.template && typeof campaign.metadata.template === 'object') {
+      return campaign.metadata.template.metadata?.name || 'Selected Template'
+    } else if (campaign.metadata?.template_id) {
+      const template = templates.find((t: EmailTemplate) => t.id === campaign.metadata?.template_id)
+      return template?.metadata?.name || 'Selected Template'
+    }
+    return 'Selected Template'
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -132,10 +210,15 @@ export default async function CampaignDetailsPage({ params }: PageProps) {
                     isDraft={isDraft}
                   />
                   {hasTemplate && (
-                    <TestEmailModal
-                      campaignId={campaign.id}
-                      campaignName={campaign.metadata?.name || 'Campaign'}
-                    />
+                    <Button
+                      onClick={() => setIsTestModalOpen(true)}
+                      variant="outline"
+                      size="sm"
+                      className="flex items-center space-x-2"
+                    >
+                      <Mail className="h-4 w-4" />
+                      <span>Send Test</span>
+                    </Button>
                   )}
                   <SendCampaignButton 
                     campaignId={campaign.id}
@@ -298,6 +381,16 @@ export default async function CampaignDetailsPage({ params }: PageProps) {
           contacts={contacts} 
         />
       </main>
+
+      {/* Test Email Modal */}
+      <TestEmailModal
+        isOpen={isTestModalOpen}
+        onClose={() => setIsTestModalOpen(false)}
+        onSend={handleSendTestEmail}
+        campaignName={campaign.metadata?.name || 'Campaign'}
+        templateName={getTemplateName()}
+        isLoading={isTestEmailLoading}
+      />
     </div>
   )
 }

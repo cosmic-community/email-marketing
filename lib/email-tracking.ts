@@ -1,6 +1,39 @@
 import { EmailContact } from '@/types'
 
 /**
+ * Replace email variables in content with actual values
+ */
+export function replaceEmailVariables(
+  content: string,
+  variables: {
+    first_name?: string
+    last_name?: string
+    email?: string
+    unsubscribe_url?: string
+    [key: string]: string | undefined
+  }
+): string {
+  if (!content) {
+    return ''
+  }
+
+  let processedContent = content
+
+  // Replace each variable if it exists
+  Object.entries(variables).forEach(([key, value]) => {
+    if (value !== undefined) {
+      // Replace both {{variable}} and {variable} formats
+      const regex1 = new RegExp(`{{${key}}}`, 'g')
+      const regex2 = new RegExp(`{${key}}`, 'g')
+      processedContent = processedContent.replace(regex1, value)
+      processedContent = processedContent.replace(regex2, value)
+    }
+  })
+
+  return processedContent
+}
+
+/**
  * Generate a unique tracking pixel URL for email open tracking
  */
 export function generateOpenTrackingPixel(campaignId: string, contactId: string, baseUrl?: string): string {

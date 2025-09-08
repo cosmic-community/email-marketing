@@ -143,7 +143,7 @@ export async function GET(request: NextRequest) {
           console.log(`📤 Sending batch ${batchIndex + 1}/${batches} (${batchRecipients.length} recipients)`)
 
           try {
-            // Prepare emails for this batch
+            // Prepare emails for this batch - Fix TS2345: Add required 'text' property
             const emails = batchRecipients.map(contact => {
               const personalizedContent = replaceEmailVariables(template.metadata.content, {
                 first_name: contact.metadata.first_name,
@@ -161,7 +161,8 @@ export async function GET(request: NextRequest) {
               return {
                 to: [contact.metadata.email],
                 subject: personalizedSubject,
-                html: personalizedContent
+                html: personalizedContent,
+                text: personalizedContent.replace(/<[^>]*>/g, '') // Add required text property by stripping HTML
               }
             })
 

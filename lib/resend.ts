@@ -92,15 +92,15 @@ export async function sendBulkEmails(emails: EmailData[]): Promise<BulkEmailResu
   }
   
   const settings = await getSettings()
-  // Fix TS2322: Add proper null checks for settings metadata
-  const fromEmail = settings?.metadata?.from_email
-  const fromName = settings?.metadata?.from_name
-  const replyToEmail = settings?.metadata?.reply_to_email
   
-  // Ensure required fields are available
-  if (!fromEmail || !fromName) {
+  // Fix TS2322: Add proper null checks and ensure strings are not undefined
+  if (!settings?.metadata?.from_email || !settings?.metadata?.from_name) {
     throw new Error('Email settings not configured: missing from_email or from_name')
   }
+  
+  const fromEmail: string = settings.metadata.from_email
+  const fromName: string = settings.metadata.from_name
+  const replyToEmail: string | undefined = settings.metadata.reply_to_email
   
   // Process emails in smaller batches to avoid rate limits
   const batchSize = 10
@@ -171,14 +171,15 @@ export async function sendTestEmail({
 }): Promise<{ success: boolean; error?: string }> {
   try {
     const settings = await getSettings()
-    // Fix TS2322: Add proper null checks
-    const fromEmail = settings?.metadata?.from_email
-    const fromName = settings?.metadata?.from_name
-    const replyToEmail = settings?.metadata?.reply_to_email
     
-    if (!fromEmail || !fromName) {
+    // Fix TS2322: Add proper null checks and ensure strings are not undefined
+    if (!settings?.metadata?.from_email || !settings?.metadata?.from_name) {
       throw new Error('Email settings not configured: missing from_email or from_name')
     }
+    
+    const fromEmail: string = settings.metadata.from_email
+    const fromName: string = settings.metadata.from_name
+    const replyToEmail: string | undefined = settings.metadata.reply_to_email
     
     // Add test note to subject if provided
     const testSubject = testNote ? `[TEST] ${subject}` : `[TEST] ${subject}`

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cosmic } from '@/lib/cosmic'
-import { sendBulkEmails } from '@/lib/resend'
+import { sendEmail } from '@/lib/resend'
 import { MarketingCampaign, EmailContact } from '@/types'
 
 interface BatchProcessingCampaign extends MarketingCampaign {
@@ -247,12 +247,15 @@ async function sendCampaignBatch(
   
   for (const recipient of recipients) {
     try {
-      await sendBulkEmails({
-        to: [recipient.metadata?.email || ''],
+      await sendEmail({
+        from: process.env.FROM_EMAIL || 'noreply@yourdomain.com',
+        to: recipient.metadata?.email || '',
         subject: emailData?.subject || 'Email Campaign',
         html: personalizeContent(emailData?.content || '', recipient),
-        campaignId: campaign.id,
-        recipientId: recipient.id
+        headers: {
+          'X-Campaign-ID': campaign.id,
+          'X-Contact-ID': recipient.id
+        }
       })
       
       successCount++

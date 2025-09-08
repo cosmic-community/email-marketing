@@ -127,18 +127,18 @@ export async function sendBulkEmails(emails: EmailData[]): Promise<BulkEmailResu
         
         if (result.success) {
           results.successful.push({
-            email: emailData.to[0],
+            email: emailData?.to[0] || '',
             id: result.id || ''
           })
         } else {
           results.failed.push({
-            email: emailData.to[0],
+            email: emailData?.to[0] || '',
             error: result.error || 'Unknown error'
           })
         }
       } catch (error) {
         results.failed.push({
-          email: emailData.to[0],
+          email: emailData?.to[0] || '',
           error: error instanceof Error ? error.message : 'Unknown error'
         })
       }

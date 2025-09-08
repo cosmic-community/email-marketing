@@ -387,6 +387,7 @@ export default function CampaignDetailsPage({ params }: PageProps) {
         isOpen={isTestModalOpen}
         onClose={() => setIsTestModalOpen(false)}
         onSend={handleSendTestEmail}
+        campaignId={campaign.id}
         campaignName={campaign.metadata?.name || 'Campaign'}
         templateName={getTemplateName()}
         isLoading={isTestEmailLoading}

@@ -11,6 +11,7 @@ interface TestEmailModalProps {
   isOpen: boolean
   onClose: () => void
   onSend: (emails: string[]) => Promise<void>
+  campaignId: string
   campaignName: string
   templateName?: string
   isLoading?: boolean
@@ -20,6 +21,7 @@ export default function TestEmailModal({
   isOpen,
   onClose,
   onSend,
+  campaignId,
   campaignName,
   templateName,
   isLoading = false

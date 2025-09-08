@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/campaigns/cron",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

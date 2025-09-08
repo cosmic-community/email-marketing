@@ -1,334 +1,262 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cosmic } from '@/lib/cosmic'
-import { sendEmail } from '@/lib/resend'
-import { MarketingCampaign, EmailContact } from '@/types'
-
-interface BatchProcessingCampaign extends MarketingCampaign {
-  metadata: MarketingCampaign['metadata'] & {
-    batch_size?: number
-    batch_delay_minutes?: number
-    total_recipients?: number
-    current_batch?: number
-    last_batch_sent_at?: string
-    priority?: { key: string; value: 'Low' | 'Normal' | 'High' }
-    max_retry_attempts?: number
-    retry_count?: number
-    error_log?: Array<{
-      timestamp: string
-      batch: number
-      error: string
-      retry_count: number
-    }>
-  }
-}
+import { getMarketingCampaigns, updateCampaignStatus, getEmailTemplate, getEmailContacts } from '@/lib/cosmic'
+import { sendBulkEmails } from '@/lib/resend'
+import { replaceEmailVariables } from '@/lib/email-tracking'
 
 export async function GET(request: NextRequest) {
   try {
-    // Verify cron job authorization
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET || 'your-secure-cron-secret'
+    console.log('🕐 Cron job started:', new Date().toISOString())
     
-    if (authHeader !== `Bearer ${cronSecret}`) {
+    // Verify this is a cron request (optional security check)
+    const authHeader = request.headers.get('authorization')
+    const cronSecret = process.env.CRON_SECRET
+    
+    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+      console.log('❌ Unauthorized cron request')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    console.log('🚀 Starting campaign cron job execution')
+    // Get all campaigns
+    const campaigns = await getMarketingCampaigns()
+    console.log(`📧 Found ${campaigns.length} total campaigns`)
 
-    // Find campaigns that need processing
-    const { objects: campaigns } = await cosmic.objects
-      .find({ type: 'marketing-campaigns' })
-      .props(['id', 'title', 'slug', 'metadata'])
-      .depth(1)
+    let processedCount = 0
+    let sentCount = 0
+    let errorCount = 0
 
-    if (!campaigns || campaigns.length === 0) {
-      console.log('No campaigns found')
-      return NextResponse.json({ message: 'No campaigns to process' })
-    }
-
-    const campaignsToProcess = (campaigns as BatchProcessingCampaign[]).filter(campaign => {
-      const status = campaign.metadata?.status?.value
-      const sendDate = campaign.metadata?.send_date
-      const currentTime = new Date()
-      
-      // Process campaigns that are:
-      // 1. Scheduled and ready to send (send_date <= current time)
-      // 2. Currently sending (status = 'Sending')
-      if (status === 'Scheduled' && sendDate) {
-        const scheduledTime = new Date(sendDate)
-        return scheduledTime <= currentTime
-      }
-      
-      if (status === 'Sending') {
-        return true
-      }
-      
-      return false
-    })
-
-    console.log(`Found ${campaignsToProcess.length} campaigns to process`)
-
-    const results = []
-    
-    for (const campaign of campaignsToProcess) {
+    for (const campaign of campaigns) {
       try {
-        const result = await processCampaignBatch(campaign)
-        results.push({ campaignId: campaign.id, result })
-      } catch (error) {
-        console.error(`Error processing campaign ${campaign.id}:`, error)
+        const status = campaign.metadata.status?.value
+        const sendDate = campaign.metadata.send_date
         
-        // Log error and increment retry count
-        await logCampaignError(campaign, error as Error)
+        console.log(`🔍 Processing campaign: ${campaign.metadata.name} (Status: ${status})`)
+
+        // Skip if not scheduled
+        if (status !== 'Scheduled') {
+          console.log(`⏭️ Skipping campaign ${campaign.metadata.name} - not scheduled (status: ${status})`)
+          continue
+        }
+
+        // Skip if no send date
+        if (!sendDate) {
+          console.log(`⏭️ Skipping campaign ${campaign.metadata.name} - no send date`)
+          continue
+        }
+
+        // Check if it's time to send
+        const scheduledTime = new Date(sendDate)
+        const now = new Date()
         
-        results.push({ 
-          campaignId: campaign.id, 
-          error: (error as Error).message 
-        })
+        if (scheduledTime > now) {
+          console.log(`⏰ Campaign ${campaign.metadata.name} scheduled for ${scheduledTime.toISOString()}, current time: ${now.toISOString()}`)
+          continue
+        }
+
+        console.log(`🚀 Processing scheduled campaign: ${campaign.metadata.name}`)
+        processedCount++
+
+        // Update status to "Sending"
+        await updateCampaignStatus(campaign.id, 'Sending')
+
+        // Get template
+        const templateId = campaign.metadata.template_id || 
+                          (typeof campaign.metadata.template === 'object' ? campaign.metadata.template.id : campaign.metadata.template)
+        
+        if (!templateId) {
+          console.error(`❌ No template ID found for campaign ${campaign.metadata.name}`)
+          await updateCampaignStatus(campaign.id, 'Draft')
+          errorCount++
+          continue
+        }
+
+        const template = await getEmailTemplate(templateId)
+        if (!template) {
+          console.error(`❌ Template not found for campaign ${campaign.metadata.name}`)
+          await updateCampaignStatus(campaign.id, 'Draft')
+          errorCount++
+          continue
+        }
+
+        // Get all contacts
+        const allContacts = await getEmailContacts()
+        
+        // Filter recipients
+        let recipients: any[] = []
+        
+        if (campaign.metadata.target_contacts && campaign.metadata.target_contacts.length > 0) {
+          // Target specific contacts
+          const targetContactIds = campaign.metadata.target_contacts.map(contact => 
+            typeof contact === 'string' ? contact : contact.id
+          )
+          
+          recipients = allContacts.filter(contact => 
+            targetContactIds.includes(contact.id) &&
+            contact.metadata.status?.value === 'Active'
+          )
+        } else if (campaign.metadata.target_tags && campaign.metadata.target_tags.length > 0) {
+          // Target by tags
+          recipients = allContacts.filter(contact => {
+            if (contact.metadata.status?.value !== 'Active') return false
+            if (!contact.metadata.tags || !Array.isArray(contact.metadata.tags)) return false
+            
+            return campaign.metadata.target_tags!.some(tag => 
+              contact.metadata.tags!.includes(tag)
+            )
+          })
+        }
+
+        if (recipients.length === 0) {
+          console.log(`⚠️ No active recipients found for campaign ${campaign.metadata.name}`)
+          await updateCampaignStatus(campaign.id, 'Draft')
+          continue
+        }
+
+        console.log(`📬 Sending to ${recipients.length} recipients for campaign ${campaign.metadata.name}`)
+
+        // Create template snapshot for sent campaign
+        const templateSnapshot = {
+          name: template.metadata.name,
+          subject: template.metadata.subject,
+          content: template.metadata.content,
+          template_type: template.metadata.template_type,
+          snapshot_date: new Date().toISOString(),
+          original_template_id: template.id
+        }
+
+        // Batch processing settings
+        const batchSize = campaign.metadata.batch_size || 50
+        const batchDelay = (campaign.metadata.batch_delay_minutes || 5) * 60 * 1000 // Convert to milliseconds
+
+        let totalSent = 0
+        let totalDelivered = 0
+        let totalBounced = 0
+        const batches = Math.ceil(recipients.length / batchSize)
+
+        console.log(`📦 Processing ${batches} batch(es) of ${batchSize} recipients each`)
+
+        // Process in batches
+        for (let batchIndex = 0; batchIndex < batches; batchIndex++) {
+          const start = batchIndex * batchSize
+          const end = Math.min(start + batchSize, recipients.length)
+          const batchRecipients = recipients.slice(start, end)
+
+          console.log(`📤 Sending batch ${batchIndex + 1}/${batches} (${batchRecipients.length} recipients)`)
+
+          try {
+            // Prepare emails for this batch
+            const emails = batchRecipients.map(contact => {
+              const personalizedContent = replaceEmailVariables(template.metadata.content, {
+                first_name: contact.metadata.first_name,
+                last_name: contact.metadata.last_name || '',
+                email: contact.metadata.email,
+                unsubscribe_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/unsubscribe?email=${encodeURIComponent(contact.metadata.email)}`
+              })
+
+              const personalizedSubject = replaceEmailVariables(template.metadata.subject, {
+                first_name: contact.metadata.first_name,
+                last_name: contact.metadata.last_name || '',
+                email: contact.metadata.email
+              })
+
+              return {
+                to: [contact.metadata.email],
+                subject: personalizedSubject,
+                html: personalizedContent
+              }
+            })
+
+            // Send batch
+            const batchResults = await sendBulkEmails(emails)
+            
+            // Count results
+            totalSent += batchResults.successful.length
+            totalDelivered += batchResults.successful.length // Assume successful sends are delivered for now
+            totalBounced += batchResults.failed.length
+
+            console.log(`✅ Batch ${batchIndex + 1} complete: ${batchResults.successful.length} sent, ${batchResults.failed.length} failed`)
+
+            // Update campaign with current progress
+            const currentStats = {
+              sent: totalSent,
+              delivered: totalDelivered,
+              opened: 0,
+              clicked: 0,
+              bounced: totalBounced,
+              unsubscribed: 0,
+              open_rate: '0%',
+              click_rate: '0%'
+            }
+
+            await updateCampaignStatus(campaign.id, batches > 1 && batchIndex < batches - 1 ? 'Sending' : 'Sent', currentStats, templateSnapshot)
+
+            // Add delay between batches (except for the last batch)
+            if (batchIndex < batches - 1 && batchDelay > 0) {
+              console.log(`⏳ Waiting ${batchDelay / 1000}s before next batch...`)
+              await new Promise(resolve => setTimeout(resolve, batchDelay))
+            }
+
+          } catch (batchError) {
+            console.error(`❌ Error in batch ${batchIndex + 1}:`, batchError)
+            // Continue with next batch, but log the error
+          }
+        }
+
+        // Final stats update
+        const finalStats = {
+          sent: totalSent,
+          delivered: totalDelivered,
+          opened: 0,
+          clicked: 0,
+          bounced: totalBounced,
+          unsubscribed: 0,
+          open_rate: '0%',
+          click_rate: '0%'
+        }
+
+        await updateCampaignStatus(campaign.id, 'Sent', finalStats, templateSnapshot)
+
+        console.log(`✅ Campaign ${campaign.metadata.name} sent successfully to ${totalSent}/${recipients.length} recipients`)
+        sentCount++
+
+      } catch (campaignError) {
+        console.error(`❌ Error processing campaign ${campaign.metadata.name}:`, campaignError)
+        
+        // Try to update campaign status to indicate error
+        try {
+          await updateCampaignStatus(campaign.id, 'Draft')
+        } catch (statusUpdateError) {
+          console.error('Failed to update campaign status after error:', statusUpdateError)
+        }
+        
+        errorCount++
       }
     }
 
-    return NextResponse.json({ 
-      message: 'Cron job completed',
-      processedCampaigns: results.length,
-      results 
-    })
-    
+    const summary = {
+      timestamp: new Date().toISOString(),
+      totalCampaigns: campaigns.length,
+      processedCampaigns: processedCount,
+      sentCampaigns: sentCount,
+      errorCampaigns: errorCount,
+      message: `Cron job completed successfully. Processed ${processedCount} campaigns, sent ${sentCount}, ${errorCount} errors.`
+    }
+
+    console.log('🎯 Cron job completed:', summary)
+
+    return NextResponse.json(summary)
+
   } catch (error) {
-    console.error('Cron job error:', error)
-    return NextResponse.json(
-      { error: 'Cron job failed', details: (error as Error).message },
-      { status: 500 }
-    )
-  }
-}
-
-async function processCampaignBatch(campaign: BatchProcessingCampaign) {
-  console.log(`Processing campaign: ${campaign.metadata?.name} (${campaign.id})`)
-  
-  const batchSize = campaign.metadata?.batch_size || 100
-  const batchDelayMinutes = campaign.metadata?.batch_delay_minutes || 5
-  const currentBatch = campaign.metadata?.current_batch || 0
-  const lastBatchSentAt = campaign.metadata?.last_batch_sent_at
-  
-  // Check if we need to wait for batch delay
-  if (lastBatchSentAt && campaign.metadata?.status?.value === 'Sending') {
-    const lastSentTime = new Date(lastBatchSentAt)
-    const timeSinceLastBatch = Date.now() - lastSentTime.getTime()
-    const delayInMs = batchDelayMinutes * 60 * 1000
+    console.error('💥 Fatal cron job error:', error)
     
-    if (timeSinceLastBatch < delayInMs) {
-      const waitTimeRemaining = Math.ceil((delayInMs - timeSinceLastBatch) / 60000)
-      console.log(`Campaign ${campaign.id} needs to wait ${waitTimeRemaining} more minutes`)
-      return { status: 'waiting', waitTimeRemaining }
-    }
-  }
-
-  // Get recipients for this campaign
-  const recipients = await getCampaignRecipients(campaign)
-  const totalRecipients = recipients.length
-  
-  // Update total recipients count if not set
-  if (!campaign.metadata?.total_recipients) {
-    await cosmic.objects.updateOne(campaign.id, {
-      metadata: { total_recipients: totalRecipients }
-    })
-  }
-
-  // Calculate batch boundaries
-  const startIndex = currentBatch * batchSize
-  const endIndex = Math.min(startIndex + batchSize, totalRecipients)
-  
-  if (startIndex >= totalRecipients) {
-    // Campaign is complete
-    console.log(`Campaign ${campaign.id} completed. Total sent: ${totalRecipients}`)
-    
-    await cosmic.objects.updateOne(campaign.id, {
-      metadata: {
-        status: { key: 'sent', value: 'Sent' },
-        stats: {
-          ...campaign.metadata?.stats,
-          sent: totalRecipients,
-          delivered: totalRecipients // Will be updated by webhook
-        }
-      }
-    })
-    
-    return { status: 'completed', totalSent: totalRecipients }
-  }
-
-  // Get current batch of recipients
-  const batchRecipients = recipients.slice(startIndex, endIndex)
-  console.log(`Sending batch ${currentBatch + 1}: contacts ${startIndex + 1}-${endIndex} of ${totalRecipients}`)
-
-  // Update campaign status to 'Sending' if this is the first batch
-  if (currentBatch === 0 && campaign.metadata?.status?.value !== 'Sending') {
-    await cosmic.objects.updateOne(campaign.id, {
-      metadata: {
-        status: { key: 'sending', value: 'Sending' },
-        template_snapshot: await createTemplateSnapshot(campaign)
-      }
-    })
-  }
-
-  // Send emails for this batch
-  const sendResults = await sendCampaignBatch(campaign, batchRecipients)
-  
-  // Update campaign with batch progress
-  await cosmic.objects.updateOne(campaign.id, {
-    metadata: {
-      current_batch: currentBatch + 1,
-      last_batch_sent_at: new Date().toISOString(),
-      stats: {
-        ...campaign.metadata?.stats,
-        sent: (campaign.metadata?.stats?.sent || 0) + sendResults.successCount,
-        bounced: (campaign.metadata?.stats?.bounced || 0) + sendResults.errorCount
-      }
-    }
-  })
-
-  return {
-    status: 'batch_sent',
-    batch: currentBatch + 1,
-    sent: sendResults.successCount,
-    errors: sendResults.errorCount,
-    progress: `${endIndex}/${totalRecipients}`
+    return NextResponse.json({
+      error: 'Cron job failed',
+      details: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    }, { status: 500 })
   }
 }
 
-async function getCampaignRecipients(campaign: BatchProcessingCampaign): Promise<EmailContact[]> {
-  const recipients: EmailContact[] = []
-  
-  // Get contacts from target_contacts
-  if (campaign.metadata?.target_contacts && Array.isArray(campaign.metadata.target_contacts)) {
-    for (const contact of campaign.metadata.target_contacts) {
-      if (typeof contact === 'object' && contact.metadata?.status?.value === 'Active') {
-        recipients.push(contact as EmailContact)
-      }
-    }
-  }
-  
-  // Get contacts by tags
-  if (campaign.metadata?.target_tags && Array.isArray(campaign.metadata.target_tags)) {
-    const { objects: taggedContacts } = await cosmic.objects
-      .find({ 
-        type: 'email-contacts',
-        'metadata.tags': { $in: campaign.metadata.target_tags }
-      })
-      .props(['id', 'title', 'slug', 'metadata'])
-      .depth(1)
-    
-    if (taggedContacts) {
-      for (const contact of taggedContacts as EmailContact[]) {
-        if (contact.metadata?.status?.value === 'Active' && 
-            !recipients.find(r => r.id === contact.id)) {
-          recipients.push(contact)
-        }
-      }
-    }
-  }
-  
-  return recipients
-}
-
-async function sendCampaignBatch(
-  campaign: BatchProcessingCampaign, 
-  recipients: EmailContact[]
-): Promise<{ successCount: number; errorCount: number }> {
-  let successCount = 0
-  let errorCount = 0
-  
-  const template = campaign.metadata?.template
-  const templateSnapshot = campaign.metadata?.template_snapshot
-  
-  if (!template && !templateSnapshot) {
-    throw new Error('No template found for campaign')
-  }
-  
-  const emailData = templateSnapshot || template?.metadata
-  
-  for (const recipient of recipients) {
-    try {
-      await sendEmail({
-        from: process.env.FROM_EMAIL || 'noreply@yourdomain.com',
-        to: recipient.metadata?.email || '',
-        subject: emailData?.subject || 'Email Campaign',
-        html: personalizeContent(emailData?.content || '', recipient),
-        headers: {
-          'X-Campaign-ID': campaign.id,
-          'X-Contact-ID': recipient.id
-        }
-      })
-      
-      successCount++
-    } catch (error) {
-      console.error(`Failed to send email to ${recipient.metadata?.email}:`, error)
-      errorCount++
-    }
-  }
-  
-  return { successCount, errorCount }
-}
-
-function personalizeContent(content: string, recipient: EmailContact): string {
-  let personalizedContent = content
-  
-  // Replace common placeholders
-  personalizedContent = personalizedContent
-    .replace(/\{\{first_name\}\}/g, recipient.metadata?.first_name || 'Subscriber')
-    .replace(/\{\{last_name\}\}/g, recipient.metadata?.last_name || '')
-    .replace(/\{\{email\}\}/g, recipient.metadata?.email || '')
-    .replace(/\{\{full_name\}\}/g, 
-      `${recipient.metadata?.first_name || ''} ${recipient.metadata?.last_name || ''}`.trim() || 'Subscriber')
-  
-  // Add unsubscribe link
-  const unsubscribeUrl = `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/unsubscribe?email=${encodeURIComponent(recipient.metadata?.email || '')}`
-  personalizedContent = personalizedContent.replace(
-    /\{\{unsubscribe_url\}\}/g, 
-    unsubscribeUrl
-  )
-  
-  return personalizedContent
-}
-
-async function createTemplateSnapshot(campaign: BatchProcessingCampaign) {
-  const template = campaign.metadata?.template
-  if (!template || typeof template !== 'object') return null
-  
-  return {
-    name: template.metadata?.name,
-    subject: template.metadata?.subject,
-    content: template.metadata?.content,
-    template_type: template.metadata?.template_type,
-    snapshot_date: new Date().toISOString(),
-    original_template_id: template.id
-  }
-}
-
-async function logCampaignError(campaign: BatchProcessingCampaign, error: Error) {
-  const currentRetryCount = (campaign.metadata?.retry_count || 0) + 1
-  const maxRetryAttempts = campaign.metadata?.max_retry_attempts || 3
-  
-  const errorLog = campaign.metadata?.error_log || []
-  errorLog.push({
-    timestamp: new Date().toISOString(),
-    batch: campaign.metadata?.current_batch || 0,
-    error: error.message,
-    retry_count: currentRetryCount
-  })
-  
-  const updates: any = {
-    retry_count: currentRetryCount,
-    error_log: errorLog
-  }
-  
-  // If max retries exceeded, pause the campaign
-  if (currentRetryCount >= maxRetryAttempts) {
-    updates.status = { key: 'paused', value: 'Paused' }
-  }
-  
-  await cosmic.objects.updateOne(campaign.id, { metadata: updates })
-}
-
-// POST endpoint to manually trigger cron job (for testing)
+// Also handle POST requests for manual triggering
 export async function POST(request: NextRequest) {
   return GET(request)
 }

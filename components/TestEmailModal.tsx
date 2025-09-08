@@ -1,229 +1,200 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { LoadingSpinner } from '@/components/ui/loading-spinner'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from '@/components/ui/dialog'
-import { Settings } from '@/types'
+import { Label } from '@/components/ui/label'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { CheckCircle, AlertCircle, Mail, Loader2, Info } from 'lucide-react'
 
 interface TestEmailModalProps {
-  campaignId: string
+  isOpen: boolean
+  onClose: () => void
+  onSend: (emails: string[]) => Promise<void>
   campaignName: string
+  templateName?: string
+  isLoading?: boolean
 }
 
-export default function TestEmailModal({ 
-  campaignId, 
-  campaignName 
+export default function TestEmailModal({
+  isOpen,
+  onClose,
+  onSend,
+  campaignName,
+  templateName,
+  isLoading = false
 }: TestEmailModalProps) {
-  const [testEmailsInput, setTestEmailsInput] = useState<string>('')
-  const [isSending, setIsSending] = useState(false)
-  const [isLoadingEmails, setIsLoadingEmails] = useState(false)
+  const [testEmails, setTestEmails] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [settings, setSettings] = useState<Settings | null>(null)
-  const [isOpen, setIsOpen] = useState(false)
 
-  // Load settings and test emails when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      loadSettings()
-    }
-  }, [isOpen])
+  // Email validation regex
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-  const loadSettings = async () => {
-    setIsLoadingEmails(true)
-    try {
-      const response = await fetch('/api/settings')
-      if (response.ok) {
-        const data = await response.json()
-        if (data.settings?.metadata?.test_emails?.length > 0) {
-          // Join existing test emails with commas
-          setTestEmailsInput(data.settings.metadata.test_emails)
-        }
-        setSettings(data.settings)
-      }
-    } catch (error) {
-      console.error('Failed to load settings:', error)
-    } finally {
-      setIsLoadingEmails(false)
-    }
-  }
-
-  const saveTestEmailsToSettings = async (emails: string[]) => {
-    try {
-      const validEmails = emails.filter(email => email.trim() !== '')
-      
-      const response = await fetch('/api/settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          // Include required fields from current settings
-          from_name: settings?.metadata?.from_name || 'Email Marketing',
-          from_email: settings?.metadata?.from_email || 'hello@example.com',
-          company_name: settings?.metadata?.company_name || 'Your Company',
-          // Add test emails
-          test_emails: validEmails
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to save test emails to settings')
-      }
-    } catch (error) {
-      console.error('Failed to save test emails:', error)
-    }
-  }
-
-  const parseEmailsFromInput = (input: string): string[] => {
-    // Split by comma and clean up each email
-    return input
+  // Parse and validate email addresses
+  const parseEmails = (emailString: string): string[] => {
+    if (!emailString.trim()) return []
+    
+    return emailString
       .split(',')
       .map(email => email.trim())
-      .filter(email => email !== '')
+      .filter(email => email.length > 0)
   }
 
-  const handleSendTest = async () => {
+  const validateEmails = (emails: string[]): { valid: string[], invalid: string[] } => {
+    const valid: string[] = []
+    const invalid: string[] = []
+    
+    emails.forEach(email => {
+      if (emailRegex.test(email)) {
+        valid.push(email)
+      } else {
+        invalid.push(email)
+      }
+    })
+    
+    return { valid, invalid }
+  }
+
+  const handleSend = async () => {
     setError('')
     setSuccess('')
-    setIsSending(true)
+
+    // Parse email addresses
+    const emailList = parseEmails(testEmails)
+    
+    if (emailList.length === 0) {
+      setError('Test email addresses are required')
+      return
+    }
+
+    // Validate email addresses
+    const { valid, invalid } = validateEmails(emailList)
+    
+    if (invalid.length > 0) {
+      setError(`Invalid email addresses: ${invalid.join(', ')}`)
+      return
+    }
+
+    if (valid.length === 0) {
+      setError('No valid email addresses provided')
+      return
+    }
 
     try {
-      // Parse emails from comma-separated input
-      const validEmails = parseEmailsFromInput(testEmailsInput)
+      await onSend(valid)
+      setSuccess(`Test email sent successfully to ${valid.length} recipient${valid.length > 1 ? 's' : ''}`)
       
-      if (validEmails.length === 0) {
-        setError('Please enter at least one test email address')
-        return
-      }
-
-      // Validate email format
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-      const invalidEmails = validEmails.filter(email => !emailRegex.test(email))
-      
-      if (invalidEmails.length > 0) {
-        setError(`Invalid email addresses: ${invalidEmails.join(', ')}`)
-        return
-      }
-
-      // Save test emails to settings for future use
-      await saveTestEmailsToSettings(validEmails)
-
-      // Send test emails
-      const response = await fetch(`/api/campaigns/${campaignId}/test`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          test_emails: validEmails
-        }),
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to send test emails')
-      }
-
-      const result = await response.json()
-      setSuccess(`Test emails sent successfully to ${result.stats.sent} of ${result.stats.total} recipients!`)
-      
-      // Auto-close after 3 seconds on success
+      // Clear form after successful send
       setTimeout(() => {
-        setIsOpen(false)
-      }, 3000)
-
-    } catch (error: any) {
-      setError(error.message || 'Failed to send test emails')
-    } finally {
-      setIsSending(false)
+        setTestEmails('')
+        setSuccess('')
+        onClose()
+      }, 2000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send test email')
     }
+  }
+
+  const handleEmailChange = (value: string) => {
+    setTestEmails(value)
+    setError('') // Clear error when user starts typing
+    setSuccess('') // Clear success message
   }
 
   const handleClose = () => {
-    setError('')
-    setSuccess('')
-    setIsSending(false)
-    setIsOpen(false)
+    if (!isLoading) {
+      setTestEmails('')
+      setError('')
+      setSuccess('')
+      onClose()
+    }
   }
 
+  const emailList = parseEmails(testEmails)
+  const { valid, invalid } = validateEmails(emailList)
+
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" className="btn-outline">
-          🧪 Send Test Email
-        </Button>
-      </DialogTrigger>
+    <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>Send Test Email</DialogTitle>
-          <p className="text-sm text-gray-600">
-            Send a test version of "{campaignName}" to review before launching
-          </p>
+          <DialogTitle className="flex items-center space-x-2">
+            <Mail className="h-5 w-5 text-blue-600" />
+            <span>Send Test Email</span>
+          </DialogTitle>
         </DialogHeader>
+        
+        <div className="space-y-4 py-4">
+          {/* Campaign/Template Info */}
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-blue-800">
+              Send a test version of "{campaignName}" 
+              {templateName && ` using template "${templateName}"`} 
+              to review before launching
+            </p>
+          </div>
 
-        <div className="py-4">
+          {/* Error Message */}
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
-              <p className="text-sm text-red-600">{error}</p>
+            <div className="flex items-center space-x-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0" />
+              <p className="text-red-600 text-sm">{error}</p>
             </div>
           )}
 
+          {/* Success Message */}
           {success && (
-            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
-              <p className="text-sm text-green-600">{success}</p>
+            <div className="flex items-center space-x-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+              <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0" />
+              <p className="text-green-600 text-sm">{success}</p>
             </div>
           )}
 
-          <div className="space-y-3">
-            <label className="block text-sm font-medium text-gray-700">
-              Test Email Addresses
-            </label>
+          {/* Email Input */}
+          <div className="space-y-2">
+            <Label htmlFor="testEmails">Test Email Addresses *</Label>
+            <Input
+              id="testEmails"
+              type="text"
+              value={testEmails}
+              onChange={(e) => handleEmailChange(e.target.value)}
+              placeholder="spirony@gmail.com, tony@cosmicjs.com"
+              disabled={isLoading}
+              className={`${invalid.length > 0 ? 'border-red-300' : ''}`}
+            />
+            <p className="text-xs text-gray-500">
+              Separate multiple email addresses with commas
+            </p>
             
-            <div className="relative">
-              <Input
-                type="text"
-                placeholder={
-                  isLoadingEmails 
-                    ? "Loading saved test emails..." 
-                    : "Enter email addresses separated by commas (e.g., user1@example.com, user2@example.com)"
-                }
-                value={testEmailsInput}
-                onChange={(e) => setTestEmailsInput(e.target.value)}
-                disabled={isSending || isLoadingEmails}
-                className="w-full pr-10"
-              />
-              {isLoadingEmails && (
-                <div className="absolute top-1/2 right-3 -translate-y-1/2 pointer-events-none">
-                  <LoadingSpinner size="sm" variant="primary" />
-                </div>
-              )}
-              <p className="text-xs text-gray-500 mt-1">
-                {isLoadingEmails 
-                  ? "Loading your previously saved test emails..." 
-                  : "Separate multiple email addresses with commas"
-                }
-              </p>
-            </div>
-
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <div className="flex items-start space-x-2">
-                <svg className="w-4 h-4 text-blue-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div>
-                  <p className="text-sm font-medium text-blue-800">
-                    Test Email Features:
+            {/* Email validation feedback */}
+            {testEmails.trim() && emailList.length > 0 && (
+              <div className="text-xs space-y-1">
+                {valid.length > 0 && (
+                  <p className="text-green-600">
+                    ✓ {valid.length} valid email{valid.length > 1 ? 's' : ''}: {valid.join(', ')}
                   </p>
-                  <ul className="text-sm text-blue-700 mt-1 space-y-1">
-                    <li>• Subject line will include [TEST] prefix</li>
-                    <li>• Template variables will be replaced with sample data</li>
-                    <li>• Email will include a test banner at the top</li>
-                    <li>• Test emails are saved to your settings for future use</li>
-                  </ul>
-                </div>
+                )}
+                {invalid.length > 0 && (
+                  <p className="text-red-600">
+                    ✗ {invalid.length} invalid email{invalid.length > 1 ? 's' : ''}: {invalid.join(', ')}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Test Email Features Info */}
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-start space-x-2">
+              <Info className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+              <div className="text-sm text-blue-800">
+                <p className="font-medium mb-2">Test Email Features:</p>
+                <ul className="space-y-1 text-xs">
+                  <li>• Subject line will include [TEST] prefix</li>
+                  <li>• Template variables will be replaced with sample data</li>
+                  <li>• Email will include a test banner at the top</li>
+                  <li>• Test emails are saved to your settings for future use</li>
+                </ul>
               </div>
             </div>
           </div>
@@ -231,24 +202,29 @@ export default function TestEmailModal({
 
         <DialogFooter className="flex space-x-2">
           <Button
+            type="button"
             variant="outline"
             onClick={handleClose}
-            disabled={isSending}
+            disabled={isLoading}
           >
             Cancel
           </Button>
           <Button
-            onClick={handleSendTest}
-            disabled={isSending || isLoadingEmails || testEmailsInput.trim() === ''}
-            className="btn-primary"
+            type="button"
+            onClick={handleSend}
+            disabled={isLoading || valid.length === 0}
+            className="bg-blue-600 hover:bg-blue-700 text-white min-w-[140px]"
           >
-            {isSending ? (
+            {isLoading ? (
               <>
-                <LoadingSpinner size="sm" className="mr-2" />
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Sending...
               </>
             ) : (
-              'Send Test Email'
+              <>
+                <Mail className="mr-2 h-4 w-4" />
+                Send Test Email
+              </>
             )}
           </Button>
         </DialogFooter>

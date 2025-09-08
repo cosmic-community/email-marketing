@@ -98,6 +98,7 @@ export async function sendBulkEmails(emails: EmailData[]): Promise<BulkEmailResu
     throw new Error('Email settings not configured: missing from_email or from_name')
   }
   
+  // Ensure these are strings, not undefined
   const fromEmail: string = settings.metadata.from_email
   const fromName: string = settings.metadata.from_name
   const replyToEmail: string | undefined = settings.metadata.reply_to_email
@@ -177,6 +178,7 @@ export async function sendTestEmail({
       throw new Error('Email settings not configured: missing from_email or from_name')
     }
     
+    // Ensure these are strings, not undefined
     const fromEmail: string = settings.metadata.from_email
     const fromName: string = settings.metadata.from_name
     const replyToEmail: string | undefined = settings.metadata.reply_to_email

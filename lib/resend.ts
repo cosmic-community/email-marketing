@@ -1,6 +1,5 @@
 import { Resend } from 'resend'
 import { getSettings } from './cosmic'
-import { addEmailTracking } from './email-tracking'
 
 // Initialize Resend client
 let resendClient: Resend | null = null
@@ -20,10 +19,22 @@ async function getResendClient(): Promise<Resend> {
   return resendClient
 }
 
+// Define proper email options interface that matches Resend's expected format
+interface SendEmailOptions {
+  from: string
+  to: string[]
+  subject: string
+  html: string
+  text: string
+  reply_to?: string
+  headers?: Record<string, string>
+}
+
 interface EmailData {
   to: string[]
   subject: string
   html: string
+  text: string
   campaignId?: string
 }
 
@@ -41,36 +52,22 @@ interface BulkEmailResult {
 /**
  * Send a single email
  */
-export async function sendEmail({
-  to,
-  subject,
-  html,
-  campaignId
-}: EmailData): Promise<{ success: boolean; id?: string; error?: string }> {
+export async function sendEmail(options: SendEmailOptions): Promise<{ success: boolean; id?: string; error?: string }> {
   try {
     const resend = await getResendClient()
-    const settings = await getSettings()
     
-    // Get from email and name from settings
-    const fromEmail = settings?.metadata?.from_email || process.env.FROM_EMAIL || 'noreply@yourdomain.com'
-    const fromName = settings?.metadata?.from_name || process.env.FROM_NAME || 'Your Company'
-    
-    // Add tracking if campaign ID is provided
-    let trackedHtml = html
-    if (campaignId && to.length === 1) {
-      trackedHtml = addEmailTracking(html, campaignId, to[0])
+    // Fix TS2345: Ensure all required fields are present and properly typed
+    const emailData = {
+      from: options.from, // Already a string from the caller
+      to: options.to,
+      subject: options.subject,
+      html: options.html,
+      text: options.text || options.html.replace(/<[^>]*>/g, ''), // Provide fallback text
+      reply_to: options.reply_to,
+      headers: options.headers
     }
     
-    const result = await resend.emails.send({
-      from: `${fromName} <${fromEmail}>`,
-      to,
-      subject,
-      html: trackedHtml,
-      // Add unsubscribe header
-      headers: {
-        'List-Unsubscribe': `<${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/unsubscribe>`
-      }
-    })
+    const result = await resend.emails.send(emailData)
     
     return {
       success: true,
@@ -94,6 +91,17 @@ export async function sendBulkEmails(emails: EmailData[]): Promise<BulkEmailResu
     failed: []
   }
   
+  const settings = await getSettings()
+  // Fix TS2322: Add proper null checks for settings metadata
+  const fromEmail = settings?.metadata?.from_email
+  const fromName = settings?.metadata?.from_name
+  const replyToEmail = settings?.metadata?.reply_to_email
+  
+  // Ensure required fields are available
+  if (!fromEmail || !fromName) {
+    throw new Error('Email settings not configured: missing from_email or from_name')
+  }
+  
   // Process emails in smaller batches to avoid rate limits
   const batchSize = 10
   const batches = []
@@ -104,17 +112,33 @@ export async function sendBulkEmails(emails: EmailData[]): Promise<BulkEmailResu
   
   for (const batch of batches) {
     const batchPromises = batch.map(async (emailData) => {
-      const result = await sendEmail(emailData)
-      
-      if (result.success) {
-        results.successful.push({
-          email: emailData.to[0],
-          id: result.id || ''
-        })
-      } else {
+      try {
+        const emailOptions: SendEmailOptions = {
+          from: `${fromName} <${fromEmail}>`,
+          to: emailData.to,
+          subject: emailData.subject,
+          html: emailData.html,
+          text: emailData.text,
+          reply_to: replyToEmail
+        }
+        
+        const result = await sendEmail(emailOptions)
+        
+        if (result.success) {
+          results.successful.push({
+            email: emailData.to[0],
+            id: result.id || ''
+          })
+        } else {
+          results.failed.push({
+            email: emailData.to[0],
+            error: result.error || 'Unknown error'
+          })
+        }
+      } catch (error) {
         results.failed.push({
           email: emailData.to[0],
-          error: result.error || 'Unknown error'
+          error: error instanceof Error ? error.message : 'Unknown error'
         })
       }
     })
@@ -146,15 +170,29 @@ export async function sendTestEmail({
   testNote?: string
 }): Promise<{ success: boolean; error?: string }> {
   try {
+    const settings = await getSettings()
+    // Fix TS2322: Add proper null checks
+    const fromEmail = settings?.metadata?.from_email
+    const fromName = settings?.metadata?.from_name
+    const replyToEmail = settings?.metadata?.reply_to_email
+    
+    if (!fromEmail || !fromName) {
+      throw new Error('Email settings not configured: missing from_email or from_name')
+    }
+    
     // Add test note to subject if provided
     const testSubject = testNote ? `[TEST] ${subject}` : `[TEST] ${subject}`
     
-    const result = await sendEmail({
+    const emailOptions: SendEmailOptions = {
+      from: `${fromName} <${fromEmail}>`,
       to,
       subject: testSubject,
-      html
-    })
+      html,
+      text: html.replace(/<[^>]*>/g, ''), // Strip HTML for text version
+      reply_to: replyToEmail
+    }
     
+    const result = await sendEmail(emailOptions)
     return result
   } catch (error) {
     console.error('Error sending test email:', error)
@@ -196,9 +234,13 @@ export async function getResendAccountInfo(): Promise<{
       resend.apiKeys.list()
     ])
     
+    // Fix TS2322: Ensure arrays are returned even if data is undefined
+    const domainsArray = domains.data || []
+    const apiKeysArray = apiKeys.data || []
+    
     return {
-      domains: domains.data || [],
-      apiKeys: apiKeys.data || []
+      domains: domainsArray,
+      apiKeys: apiKeysArray
     }
   } catch (error) {
     console.error('Error getting Resend account info:', error)

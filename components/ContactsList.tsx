@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -15,12 +15,23 @@ import BulkActionsModal from '@/components/BulkActionsModal'
 
 interface ContactsListProps {
   contacts: EmailContact[]
+  currentPage: number
+  totalContacts: number
+  searchTerm: string
+  statusFilter: string
 }
 
-export default function ContactsList({ contacts }: ContactsListProps) {
+export default function ContactsList({ 
+  contacts, 
+  currentPage, 
+  totalContacts, 
+  searchTerm: initialSearchTerm, 
+  statusFilter: initialStatusFilter 
+}: ContactsListProps) {
   const router = useRouter()
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const searchParams = useSearchParams()
+  const [searchTerm, setSearchTerm] = useState(initialSearchTerm)
+  const [statusFilter, setStatusFilter] = useState(initialStatusFilter)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   
@@ -29,17 +40,40 @@ export default function ContactsList({ contacts }: ContactsListProps) {
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
   const [showBulkActions, setShowBulkActions] = useState(false)
 
-  // Filter contacts based on search and status
-  const filteredContacts = contacts.filter(contact => {
-    const matchesSearch = 
-      contact.metadata.first_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      contact.metadata.last_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      contact.metadata.email.toLowerCase().includes(searchTerm.toLowerCase())
+  // Debounced search effect
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchTerm !== initialSearchTerm) {
+        updateURL({ search: searchTerm, page: '1' })
+      }
+    }, 500)
+
+    return () => clearTimeout(timeoutId)
+  }, [searchTerm, initialSearchTerm])
+
+  // Status filter effect
+  useEffect(() => {
+    if (statusFilter !== initialStatusFilter) {
+      updateURL({ status: statusFilter, page: '1' })
+    }
+  }, [statusFilter, initialStatusFilter])
+
+  const updateURL = (params: Record<string, string>) => {
+    const current = new URLSearchParams(Array.from(searchParams.entries()))
     
-    const matchesStatus = statusFilter === 'all' || contact.metadata.status.value === statusFilter
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === '' || value === 'all') {
+        current.delete(key)
+      } else {
+        current.set(key, value)
+      }
+    })
+
+    const search = current.toString()
+    const query = search ? `?${search}` : ''
     
-    return matchesSearch && matchesStatus
-  })
+    router.push(`/contacts${query}`)
+  }
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
@@ -76,7 +110,7 @@ export default function ContactsList({ contacts }: ContactsListProps) {
   // Bulk selection handlers
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedContacts(filteredContacts.map(contact => contact.id))
+      setSelectedContacts(contacts.map(contact => contact.id))
     } else {
       setSelectedContacts([])
     }
@@ -90,8 +124,8 @@ export default function ContactsList({ contacts }: ContactsListProps) {
     }
   }
 
-  const isAllSelected = filteredContacts.length > 0 && selectedContacts.length === filteredContacts.length
-  const isPartiallySelected = selectedContacts.length > 0 && selectedContacts.length < filteredContacts.length
+  const isAllSelected = contacts.length > 0 && selectedContacts.length === contacts.length
+  const isPartiallySelected = selectedContacts.length > 0 && selectedContacts.length < contacts.length
 
   // Bulk actions handlers
   const handleBulkDelete = async () => {
@@ -165,7 +199,7 @@ export default function ContactsList({ contacts }: ContactsListProps) {
     return new Date(dateString).toLocaleDateString()
   }
 
-  if (contacts.length === 0) {
+  if (totalContacts === 0) {
     return (
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
         <h3 className="text-lg font-medium text-gray-900 mb-2">No contacts yet</h3>
@@ -217,11 +251,11 @@ export default function ContactsList({ contacts }: ContactsListProps) {
           </div>
         </div>
         
-        {searchTerm || statusFilter !== 'all' ? (
-          <div className="mt-4 text-sm text-gray-600">
-            Showing {filteredContacts.length} of {contacts.length} contacts
-          </div>
-        ) : null}
+        {/* Pagination info */}
+        <div className="mt-4 text-sm text-gray-600">
+          Showing {contacts.length} of {totalContacts} contacts
+          {currentPage > 1 && ` (page ${currentPage})`}
+        </div>
       </div>
 
       {/* Bulk Actions Bar */}
@@ -315,7 +349,7 @@ export default function ContactsList({ contacts }: ContactsListProps) {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredContacts.map((contact) => (
+              {contacts.map((contact) => (
                 <tr key={contact.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <Checkbox
@@ -390,7 +424,7 @@ export default function ContactsList({ contacts }: ContactsListProps) {
         </div>
       </div>
 
-      {filteredContacts.length === 0 && (searchTerm || statusFilter !== 'all') && (
+      {contacts.length === 0 && totalContacts > 0 && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
           <h3 className="text-lg font-medium text-gray-900 mb-2">No contacts found</h3>
           <p className="text-gray-600">Try adjusting your search or filter criteria.</p>

@@ -24,18 +24,97 @@ export const cosmic = createBucketClient({
   writeKey: process.env.COSMIC_WRITE_KEY
 })
 
-// Email Contacts
-export async function getEmailContacts(): Promise<EmailContact[]> {
+// Pagination parameters interface
+interface PaginationParams {
+  page?: number
+  limit?: number
+  search?: string
+  status?: string
+}
+
+// Paginated contacts response interface
+interface PaginatedContactsResponse {
+  contacts: EmailContact[]
+  total: number
+  page: number
+  limit: number
+  totalPages: number
+}
+
+// Email Contacts with pagination support
+export async function getEmailContacts(params: PaginationParams = {}): Promise<PaginatedContactsResponse> {
   try {
-    const { objects } = await cosmic.objects
-      .find({ type: 'email-contacts' })
+    const { page = 1, limit = 25, search, status } = params
+    const skip = (page - 1) * limit
+
+    // Build query object
+    const query: any = { type: 'email-contacts' }
+
+    // Add status filter if specified
+    if (status && status !== 'all') {
+      query['metadata.status.value'] = status
+    }
+
+    // Add search filter if specified
+    if (search) {
+      // Note: Cosmic doesn't support OR queries directly, so we'll filter on the client side
+      // For now, we'll get all contacts and filter on the server
+    }
+
+    let cosmicQuery = cosmic.objects
+      .find(query)
       .props(['id', 'title', 'slug', 'metadata', 'created_at', 'modified_at'])
       .depth(1)
-    
-    return objects as EmailContact[]
+
+    // Apply pagination
+    if (!search) {
+      // Only apply skip/limit if not searching (since we need all results for search filtering)
+      cosmicQuery = cosmicQuery.skip(skip).limit(limit)
+    }
+
+    const response = await cosmicQuery
+
+    let contacts = response.objects as EmailContact[]
+    let total = response.total
+
+    // Apply search filtering on the server side if search term provided
+    if (search) {
+      const searchLower = search.toLowerCase()
+      contacts = contacts.filter(contact => {
+        const firstName = contact.metadata.first_name?.toLowerCase() || ''
+        const lastName = contact.metadata.last_name?.toLowerCase() || ''
+        const email = contact.metadata.email?.toLowerCase() || ''
+        
+        return firstName.includes(searchLower) ||
+               lastName.includes(searchLower) ||
+               email.includes(searchLower)
+      })
+      
+      // Update total for filtered results
+      total = contacts.length
+      
+      // Apply pagination to filtered results
+      contacts = contacts.slice(skip, skip + limit)
+    }
+
+    const totalPages = Math.ceil(total / limit)
+
+    return {
+      contacts,
+      total,
+      page,
+      limit,
+      totalPages
+    }
   } catch (error) {
     if (hasStatus(error) && error.status === 404) {
-      return []
+      return {
+        contacts: [],
+        total: 0,
+        page: 1,
+        limit: 25,
+        totalPages: 0
+      }
     }
     console.error('Error fetching email contacts:', error)
     throw new Error('Failed to fetch email contacts')

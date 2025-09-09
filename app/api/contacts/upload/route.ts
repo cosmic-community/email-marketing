@@ -167,10 +167,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
       )
     }
 
-    // Get existing contacts to check for duplicates
+    // Get existing contacts to check for duplicates - FIX: Extract contacts array from paginated response
     let existingContacts: EmailContact[] = []
     try {
-      existingContacts = await getEmailContacts()
+      const contactsResponse = await getEmailContacts()
+      existingContacts = contactsResponse.contacts // Extract the contacts array from the paginated response
     } catch (error) {
       console.error('Error fetching existing contacts:', error)
       // Continue without duplicate checking if we can't fetch existing contacts

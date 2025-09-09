@@ -1,84 +1,29 @@
 import { Card } from '@/components/ui/card'
-import { Users, Mail, Send, TrendingUp, Eye, MousePointer } from 'lucide-react'
+import { LucideIcon } from 'lucide-react'
 
-interface StatsData {
-  totalCampaigns: number;
-  totalContacts: number;
-  activeContacts: number;
-  totalTemplates: number;
-  sentCampaigns: number;
-  scheduledCampaigns: number;
-  totalEmailsSent: number;
-  averageOpenRate: string;
+interface StatItem {
+  title: string;
+  value: string;
+  description: string;
+  icon: LucideIcon;
+  color: string;
+  bgColor?: string;
 }
 
 interface DashboardStatsProps {
-  totalCampaigns: number;
-  totalContacts: number;
-  activeContacts: number;
-  totalTemplates: number;
-  sentCampaigns: number;
-  scheduledCampaigns: number;
-  totalEmailsSent: number;
-  averageOpenRate: string;
+  stats: StatItem[];
 }
 
-export default function DashboardStats({
-  totalCampaigns,
-  totalContacts,
-  activeContacts,
-  totalTemplates,
-  sentCampaigns,
-  scheduledCampaigns,
-  totalEmailsSent,
-  averageOpenRate
-}: DashboardStatsProps) {
-  const stats = [
-    {
-      title: 'Total Contacts',
-      value: totalContacts.toLocaleString(),
-      icon: Users,
-      description: `${activeContacts} active`,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-100'
-    },
-    {
-      title: 'Email Templates',
-      value: totalTemplates.toLocaleString(),
-      icon: Mail,
-      description: 'Ready to use',
-      color: 'text-green-600',
-      bgColor: 'bg-green-100'
-    },
-    {
-      title: 'Campaigns',
-      value: totalCampaigns.toLocaleString(),
-      icon: Send,
-      description: `${sentCampaigns} sent, ${scheduledCampaigns} scheduled`,
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-100'
-    },
-    {
-      title: 'Emails Sent',
-      value: totalEmailsSent.toLocaleString(),
-      icon: TrendingUp,
-      description: 'Total delivered',
-      color: 'text-orange-600',
-      bgColor: 'bg-orange-100'
-    },
-    {
-      title: 'Average Open Rate',
-      value: averageOpenRate,
-      icon: Eye,
-      description: 'Across all campaigns',
-      color: 'text-indigo-600',
-      bgColor: 'bg-indigo-100'
-    }
-  ]
+export default function DashboardStats({ stats }: DashboardStatsProps) {
+  // Add default bgColor for stats that don't have it
+  const statsWithBgColor = stats.map(stat => ({
+    ...stat,
+    bgColor: stat.bgColor || getBgColorFromTextColor(stat.color)
+  }));
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-      {stats.map((stat, index) => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {statsWithBgColor.map((stat, index) => (
         <Card key={index} className="p-6 hover:shadow-lg transition-shadow">
           <div className="flex items-center">
             <div className={`p-2 rounded-lg ${stat.bgColor}`}>
@@ -94,4 +39,21 @@ export default function DashboardStats({
       ))}
     </div>
   )
+}
+
+// Helper function to generate background colors from text colors
+function getBgColorFromTextColor(textColor: string): string {
+  const colorMap: Record<string, string> = {
+    'text-blue-600': 'bg-blue-100',
+    'text-green-600': 'bg-green-100',
+    'text-purple-600': 'bg-purple-100',
+    'text-orange-600': 'bg-orange-100',
+    'text-indigo-600': 'bg-indigo-100',
+    'text-red-600': 'bg-red-100',
+    'text-yellow-600': 'bg-yellow-100',
+    'text-pink-600': 'bg-pink-100',
+    'text-gray-600': 'bg-gray-100'
+  };
+  
+  return colorMap[textColor] || 'bg-gray-100';
 }

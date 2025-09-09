@@ -1,90 +1,101 @@
-interface DashboardStatsProps {
-  contactsCount: number
-  templatesCount: number
-  campaignssCount: number
+'use client'
+
+import { Card } from '@/components/ui/card'
+import { Users, Mail, Send, TrendingUp, Eye, MousePointer, UserX, Calendar } from 'lucide-react'
+import { formatNumber, formatPercentage } from '@/lib/utils'
+
+export interface DashboardStatsProps {
+  totalCampaigns: number
+  totalContacts: number
+  activeContacts: number
+  totalTemplates: number
+  sentCampaigns: number
+  scheduledCampaigns: number
+  totalEmailsSent: number
+  averageOpenRate: string
 }
 
-export default function DashboardStats({ 
-  contactsCount, 
-  templatesCount, 
-  campaignssCount 
-}: DashboardStatsProps) {
+interface StatCardProps {
+  title: string
+  value: string | number
+  icon: React.ReactNode
+  description?: string
+  trend?: {
+    value: number
+    isPositive: boolean
+  }
+}
+
+function StatCard({ title, value, icon, description, trend }: StatCardProps) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-      {/* Contacts Stats */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="bg-slate-800 p-6">
-          <div className="flex items-center">
-            <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center">
-              <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
-            </div>
-            <div className="ml-4 text-white">
-              <p className="text-3xl font-bold">{contactsCount.toLocaleString()}</p>
-              <p className="text-slate-300 font-medium">Total Contacts</p>
-            </div>
+    <Card className="p-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <div className="p-2 bg-blue-100 rounded-lg">
+            {icon}
+          </div>
+          <div>
+            <p className="text-sm font-medium text-gray-600">{title}</p>
+            <p className="text-2xl font-bold text-gray-900">{value}</p>
+            {description && (
+              <p className="text-xs text-gray-500 mt-1">{description}</p>
+            )}
           </div>
         </div>
-        <div className="p-6">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Active subscribers</span>
-            <span className="text-slate-700 font-medium">
-              {contactsCount > 0 ? `${Math.round(contactsCount * 0.85)}` : '0'} active
-            </span>
+        {trend && (
+          <div className={`flex items-center ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
+            <TrendingUp className={`h-4 w-4 ${trend.isPositive ? '' : 'rotate-180'}`} />
+            <span className="text-sm font-medium ml-1">{Math.abs(trend.value)}%</span>
           </div>
-        </div>
+        )}
       </div>
+    </Card>
+  )
+}
 
-      {/* Templates Stats */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="bg-slate-700 p-6">
-          <div className="flex items-center">
-            <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center">
-              <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
-            </div>
-            <div className="ml-4 text-white">
-              <p className="text-3xl font-bold">{templatesCount}</p>
-              <p className="text-slate-300 font-medium">Email Templates</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Ready to use</span>
-            <span className="text-slate-700 font-medium">
-              {templatesCount > 0 ? `${templatesCount} available` : 'Create first template'}
-            </span>
-          </div>
-        </div>
-      </div>
+export default function DashboardStats({
+  totalCampaigns,
+  totalContacts,
+  activeContacts,
+  totalTemplates,
+  sentCampaigns,
+  scheduledCampaigns,
+  totalEmailsSent,
+  averageOpenRate
+}: DashboardStatsProps) {
+  const activeContactsPercentage = totalContacts > 0 
+    ? ((activeContacts / totalContacts) * 100).toFixed(1) 
+    : '0'
 
-      {/* Campaigns Stats */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="bg-slate-600 p-6">
-          <div className="flex items-center">
-            <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center">
-              <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-              </svg>
-            </div>
-            <div className="ml-4 text-white">
-              <p className="text-3xl font-bold">{campaignssCount}</p>
-              <p className="text-slate-300 font-medium">Campaigns</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Total sent</span>
-            <span className="text-slate-700 font-medium">
-              {campaignssCount > 0 ? `${campaignssCount} campaigns` : 'Launch your first'}
-            </span>
-          </div>
-        </div>
-      </div>
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <StatCard
+        title="Total Contacts"
+        value={formatNumber(totalContacts)}
+        icon={<Users className="h-5 w-5 text-blue-600" />}
+        description={`${formatNumber(activeContacts)} active (${activeContactsPercentage}%)`}
+      />
+      
+      <StatCard
+        title="Total Campaigns"
+        value={formatNumber(totalCampaigns)}
+        icon={<Mail className="h-5 w-5 text-blue-600" />}
+        description={`${formatNumber(sentCampaigns)} sent, ${formatNumber(scheduledCampaigns)} scheduled`}
+      />
+      
+      <StatCard
+        title="Email Templates"
+        value={formatNumber(totalTemplates)}
+        icon={<Send className="h-5 w-5 text-blue-600" />}
+        description="Ready to use templates"
+      />
+      
+      <StatCard
+        title="Average Open Rate"
+        value={averageOpenRate}
+        icon={<Eye className="h-5 w-5 text-blue-600" />}
+        description={`${formatNumber(totalEmailsSent)} emails sent total`}
+      />
     </div>
   )
 }

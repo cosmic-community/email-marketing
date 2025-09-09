@@ -3,10 +3,11 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Trash2 } from 'lucide-react'
-import ConfirmationModal from '@/components/ConfirmationModal'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogDescription } from '@/components/ui/dialog'
+import { Trash2, Loader2, AlertTriangle } from 'lucide-react'
+import { MarketingCampaign } from '@/types'
 
-interface DeleteCampaignButtonProps {
+export interface DeleteCampaignButtonProps {
   campaignId: string
   campaignName: string
   isDraft: boolean
@@ -14,12 +15,11 @@ interface DeleteCampaignButtonProps {
 
 export default function DeleteCampaignButton({ campaignId, campaignName, isDraft }: DeleteCampaignButtonProps) {
   const router = useRouter()
-  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [isOpen, setIsOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const handleDeleteConfirm = async () => {
+  const handleDelete = async () => {
     setIsDeleting(true)
-    setShowDeleteModal(false)
 
     try {
       const response = await fetch(`/api/campaigns/${campaignId}`, {
@@ -31,45 +31,80 @@ export default function DeleteCampaignButton({ campaignId, campaignName, isDraft
         throw new Error(error.error || 'Failed to delete campaign')
       }
 
-      // Redirect to campaigns list and refresh data
+      setIsOpen(false)
       router.push('/campaigns')
-      router.refresh() // Ensure fresh data is fetched
+      router.refresh()
+
     } catch (error) {
-      console.error('Delete error:', error)
+      console.error('Error deleting campaign:', error)
       alert(error instanceof Error ? error.message : 'Failed to delete campaign')
+    } finally {
       setIsDeleting(false)
     }
   }
 
-  // Only show delete button for draft campaigns
-  if (!isDraft) {
-    return null
-  }
-
   return (
-    <>
-      <Button
-        variant="destructive"
-        size="sm"
-        onClick={() => setShowDeleteModal(true)}
-        disabled={isDeleting}
-        className="flex items-center space-x-2"
-      >
-        <Trash2 className="h-4 w-4" />
-        <span>Delete Campaign</span>
-      </Button>
+    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50">
+          <Trash2 className="mr-2 h-4 w-4" />
+          Delete
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center">
+            <AlertTriangle className="mr-2 h-5 w-5 text-red-500" />
+            Delete Campaign
+          </DialogTitle>
+          <DialogDescription>
+            Are you sure you want to delete "{campaignName}"? This action cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          <div className="bg-red-50 border border-red-200 p-3 rounded-md">
+            <p className="text-sm text-red-800">
+              <strong>Warning:</strong> Deleting this campaign will permanently remove all associated data including:
+            </p>
+            <ul className="text-sm text-red-700 mt-2 ml-4 list-disc">
+              <li>Campaign configuration and content</li>
+              <li>Target audience settings</li>
+              {!isDraft && <li>Send statistics and performance data</li>}
+              <li>All historical records</li>
+            </ul>
+          </div>
+        </div>
 
-      <ConfirmationModal
-        isOpen={showDeleteModal}
-        onOpenChange={setShowDeleteModal}
-        title="Delete Campaign"
-        message={`Are you sure you want to delete "${campaignName}"? This action cannot be undone.`}
-        confirmText="Delete Campaign"
-        cancelText="Cancel"
-        variant="destructive"
-        onConfirm={handleDeleteConfirm}
-        isLoading={isDeleting}
-      />
-    </>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setIsOpen(false)}
+            disabled={isDeleting}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleDelete}
+            disabled={isDeleting}
+            variant="destructive"
+            className="min-w-[100px]"
+          >
+            {isDeleting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Deleting...
+              </>
+            ) : (
+              <>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

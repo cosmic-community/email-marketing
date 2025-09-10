@@ -1,518 +1,363 @@
 // app/campaigns/[id]/page.tsx
-import { notFound } from "next/navigation";
-import {
-  getEmailCampaign,
-  getEmailTemplates,
-  getEmailContacts,
-  getEmailLists,
-  getEmailTemplate,
-} from "@/lib/cosmic";
-import EditCampaignForm from "@/components/EditCampaignForm";
-import SendCampaignButton from "@/components/SendCampaignButton";
-import DeleteCampaignButton from "@/components/DeleteCampaignButton";
-import TestEmailModal from "@/components/TestEmailModal";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Eye,
-  Users,
-  Mail,
-  Calendar,
-  TrendingUp,
-  Clock,
-  Send,
-  FileText,
-  Trash2,
-  List,
-} from "lucide-react";
-import Link from "next/link";
+import Link from 'next/link'
+import { notFound } from 'next/navigation'
+import { getMarketingCampaign, getEmailTemplate, getCampaignTargetContacts, getEmailLists } from '@/lib/cosmic'
+import { MarketingCampaign, EmailTemplate, EmailContact, EmailList } from '@/types'
+import SendCampaignButton from '@/components/SendCampaignButton'
+import DeleteCampaignButton from '@/components/DeleteCampaignButton'
+import TestEmailModal from '@/components/TestEmailModal'
 
-// Force dynamic rendering to ensure fresh data
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 interface CampaignPageProps {
-  params: Promise<{ id: string }>;
+  params: Promise<{ id: string }>
 }
 
 export default async function CampaignPage({ params }: CampaignPageProps) {
-  const { id } = await params;
-
-  // Fetch campaign with all related data
-  const [campaign, templates, contactsResult, lists] = await Promise.all([
-    getEmailCampaign(id),
-    getEmailTemplates(),
-    getEmailContacts({ limit: 1000 }),
-    getEmailLists(),
-  ]);
-
-  const contacts = contactsResult.contacts;
-
+  const { id } = await params
+  
+  const campaign = await getMarketingCampaign(id)
+  
   if (!campaign) {
-    notFound();
+    notFound()
   }
 
-  const status = campaign.metadata.status?.value || "Draft";
-  const stats = campaign.metadata.stats;
-
-  // Get template content for preview
-  let templateContent: {
-    name: string;
-    subject: string;
-    content: string;
-  } | null = null;
-
-  // If campaign is sent, show the snapshot
-  if (status === "Sent" && campaign.metadata.template_snapshot) {
-    templateContent = {
-      name: campaign.metadata.template_snapshot.name,
-      subject: campaign.metadata.template_snapshot.subject,
-      content: campaign.metadata.template_snapshot.content,
-    };
-  } else if (status === "Draft") {
-    // For draft campaigns, show current template content
-    const templateId =
-      typeof campaign.metadata?.template === "string"
-        ? campaign.metadata.template
-        : campaign.metadata.template?.id;
-
-    if (templateId) {
-      try {
-        const template = await getEmailTemplate(templateId);
-        if (template) {
-          templateContent = {
-            name: template.metadata.name,
-            subject: template.metadata.subject,
-            content: template.metadata.content,
-          };
-        }
-      } catch (error) {
-        console.error("Failed to load template for preview:", error);
-      }
-    }
+  // Get template details if template ID is available
+  let template: EmailTemplate | null = null
+  if (campaign.metadata.template && typeof campaign.metadata.template === 'string') {
+    template = await getEmailTemplate(campaign.metadata.template)
+  } else if (campaign.metadata.template && typeof campaign.metadata.template === 'object') {
+    template = campaign.metadata.template as EmailTemplate
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Draft":
-        return "bg-gray-100 text-gray-800 border-gray-200";
-      case "Scheduled":
-        return "bg-blue-100 text-blue-800 border-blue-200";
-      case "Sending":
-        return "bg-yellow-100 text-yellow-800 border-yellow-200";
-      case "Sent":
-        return "bg-green-100 text-green-800 border-green-200";
-      case "Cancelled":
-        return "bg-red-100 text-red-800 border-red-200";
-      default:
-        return "bg-gray-100 text-gray-800 border-gray-200";
-    }
-  };
+  // Get target contacts
+  let targetContacts: EmailContact[] = []
+  try {
+    targetContacts = await getCampaignTargetContacts(campaign)
+  } catch (error) {
+    console.error('Error fetching target contacts:', error)
+  }
 
-  const getTemplateName = () => {
-    if (
-      typeof campaign.metadata?.template === "object" &&
-      campaign.metadata.template?.metadata?.name
-    ) {
-      return campaign.metadata.template.metadata.name;
-    }
-    if (typeof campaign.metadata?.template === "string") {
-      const template = templates.find(
-        (t) => t.id === campaign.metadata.template
-      );
-      return template?.metadata?.name || "Template not found";
-    }
-    return "No template selected";
-  };
+  // Get all lists to resolve list names for display and links
+  const allLists = await getEmailLists()
+  const listMap = new Map(allLists.map(list => [list.id, list]))
 
-  const getRecipientCount = () => {
-    const listCount = campaign.metadata.target_lists?.length || 0;
-    const contactCount = campaign.metadata.target_contacts?.length || 0;
-    const tagCount = campaign.metadata.target_tags?.length || 0;
+  // Get list details for selected lists - with proper null handling
+  const selectedLists = campaign.metadata.target_lists?.map(listRef => {
+    const listId = typeof listRef === 'string' ? listRef : listRef.id
+    return listMap.get(listId)
+  }).filter((list): list is EmailList => list !== undefined) || []
 
-    const parts = [];
-    if (listCount > 0) {
-      parts.push(`${listCount} list${listCount === 1 ? '' : 's'}`);
-    }
-    if (contactCount > 0) {
-      parts.push(`${contactCount} contact${contactCount === 1 ? '' : 's'}`);
-    }
-    if (tagCount > 0) {
-      parts.push(`${tagCount} tag${tagCount === 1 ? '' : 's'}`);
-    }
-
-    if (parts.length === 0) {
-      return "0 recipients";
-    }
-
-    return parts.join(' + ');
-  };
+  const statusColor = {
+    'Draft': 'bg-gray-100 text-gray-800',
+    'Scheduled': 'bg-blue-100 text-blue-800', 
+    'Sending': 'bg-yellow-100 text-yellow-800',
+    'Sent': 'bg-green-100 text-green-800',
+    'Cancelled': 'bg-red-100 text-red-800'
+  }[campaign.metadata.status.value] || 'bg-gray-100 text-gray-800'
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-16">
-      {/* Page Header */}
-      <div className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="mb-8">
           <div className="flex items-center justify-between">
-            <div className="flex-1 min-w-0">
-              <nav className="flex items-center space-x-2 text-sm text-gray-500 mb-2">
-                <Link href="/campaigns" className="hover:text-gray-700">
-                  Campaigns
-                </Link>
-                <span>/</span>
-                <span className="text-gray-900">{campaign.metadata.name}</span>
-              </nav>
-
-              <div className="flex items-center space-x-3">
-                <h1 className="text-3xl font-bold text-gray-900 truncate">
-                  {campaign.metadata.name}
-                </h1>
-                <Badge
-                  variant="outline"
-                  className={`${getStatusColor(
-                    status
-                  )} text-sm font-medium px-3 py-1`}
-                >
-                  {status}
-                </Badge>
-              </div>
-
-              <div className="flex items-center space-x-6 text-sm text-gray-600 mt-2">
-                <div className="flex items-center space-x-1">
-                  <Mail className="h-4 w-4" />
-                  <span>{getTemplateName()}</span>
-                </div>
-
-                <div className="flex items-center space-x-1">
-                  <Users className="h-4 w-4" />
-                  <span>{getRecipientCount()}</span>
-                </div>
-
-                <div className="flex items-center space-x-1">
-                  <Calendar className="h-4 w-4" />
-                  <span>
-                    Created {new Date(campaign.created_at).toLocaleDateString()}
+            <div>
+              <Link 
+                href="/campaigns"
+                className="text-sm font-medium text-gray-500 hover:text-gray-700 mb-2 inline-block"
+              >
+                ← Back to Campaigns
+              </Link>
+              <h1 className="text-3xl font-bold text-gray-900">{campaign.metadata.name}</h1>
+              <div className="mt-2 flex items-center space-x-4">
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusColor}`}>
+                  {campaign.metadata.status.value}
+                </span>
+                {campaign.metadata.send_date && (
+                  <span className="text-sm text-gray-500">
+                    Scheduled: {new Date(campaign.metadata.send_date).toLocaleString()}
                   </span>
-                </div>
+                )}
               </div>
             </div>
-
-            <div className="flex items-center space-x-3">
-              {/* Only show test email button for draft campaigns */}
-              {status === "Draft" && (
-                <TestEmailModal
-                  campaignId={campaign.id}
-                  campaignName={campaign.metadata.name}
-                />
-              )}
+            <div className="flex space-x-3">
+              <TestEmailModal 
+                campaignId={campaign.id} 
+                campaignName={campaign.metadata.name}
+              />
+              <SendCampaignButton campaign={campaign} />
+              <Link 
+                href={`/campaigns/${campaign.id}/edit`}
+                className="btn-outline"
+              >
+                Edit Campaign
+              </Link>
+              <DeleteCampaignButton 
+                campaignId={campaign.id}
+                campaignName={campaign.metadata.name}
+                isDraft={campaign.metadata.status.value === 'Draft'}
+              />
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left Column - Campaign Form */}
-          <div className="lg:col-span-2">
-            <EditCampaignForm
-              campaign={campaign}
-              templates={templates}
-              contacts={contacts}
-              lists={lists}
-            />
+          {/* Main Content */}
+          <div className="lg:col-span-2 space-y-8">
+            {/* Campaign Details */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">Campaign Details</h2>
+              
+              <div className="space-y-4">
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Campaign Name</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{campaign.metadata.name}</dd>
+                </div>
+                
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Template</dt>
+                  <dd className="mt-1">
+                    {template ? (
+                      <Link 
+                        href={`/templates/${template.id}/edit`}
+                        className="text-sm text-blue-600 hover:text-blue-800"
+                      >
+                        {template.metadata.name}
+                      </Link>
+                    ) : (
+                      <span className="text-sm text-gray-500">No template selected</span>
+                    )}
+                  </dd>
+                </div>
 
-            {/* Template Preview Section */}
-            {templateContent && (
-              <Card className="mt-8">
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <FileText className="h-5 w-5" />
-                    <span>
-                      {status === "Sent"
-                        ? "Content Snapshot"
-                        : "Template Preview"}
-                    </span>
-                  </CardTitle>
-                  {status === "Sent" && (
-                    <p className="text-sm text-gray-600">
-                      This is the exact content that was sent to recipients
-                    </p>
-                  )}
-                  {status === "Draft" && (
-                    <p className="text-sm text-gray-600">
-                      Preview of the current template content
-                    </p>
-                  )}
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {/* Template Info */}
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="font-medium text-gray-700">
-                            Template:
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Subject Line</dt>
+                  <dd className="mt-1 text-sm text-gray-900">
+                    {campaign.metadata.template_snapshot?.subject || template?.metadata.subject || 'No subject'}
+                  </dd>
+                </div>
+
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Target Recipients</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{targetContacts.length} contacts</dd>
+                </div>
+
+                {campaign.metadata.target_tags && campaign.metadata.target_tags.length > 0 && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Target Tags</dt>
+                    <dd className="mt-1">
+                      <div className="flex flex-wrap gap-2">
+                        {campaign.metadata.target_tags.map((tag, index) => (
+                          <span 
+                            key={index}
+                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                          >
+                            {tag}
                           </span>
-                          <span className="ml-2">{templateContent.name}</span>
-                        </div>
-                        <div>
-                          <span className="font-medium text-gray-700">
-                            Subject:
-                          </span>
-                          <span className="ml-2">
-                            {templateContent.subject}
-                          </span>
-                        </div>
+                        ))}
                       </div>
-                    </div>
-
-                    {/* Email Content Preview */}
-                    <div className="border rounded-lg overflow-hidden">
-                      <div className="bg-gray-100 px-4 py-2 border-b">
-                        <span className="text-sm font-medium text-gray-700">
-                          Email Content:
-                        </span>
-                      </div>
-                      <div
-                        className="p-4 max-h-96 overflow-y-auto"
-                        dangerouslySetInnerHTML={{
-                          __html: templateContent.content,
-                        }}
-                        style={{
-                          fontFamily: "system-ui, -apple-system, sans-serif",
-                          lineHeight: "1.5",
-                        }}
-                      />
-                    </div>
-
-                    {/* Additional Info for Sent Campaigns */}
-                    {status === "Sent" &&
-                      campaign.metadata.template_snapshot && (
-                        <div className="text-xs text-gray-500 p-3 bg-blue-50 rounded">
-                          <div className="flex items-center space-x-1">
-                            <Eye className="h-3 w-3" />
-                            <span>
-                              Content captured on{" "}
-                              {new Date(
-                                campaign.metadata.template_snapshot.snapshot_date
-                              ).toLocaleString()}
-                            </span>
-                          </div>
-                        </div>
-                      )}
+                    </dd>
                   </div>
-                </CardContent>
-              </Card>
+                )}
+
+                {selectedLists.length > 0 && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">
+                      Selected Lists ({selectedLists.length}):
+                    </dt>
+                    <dd className="mt-1">
+                      <div className="flex flex-wrap gap-2">
+                        {selectedLists.map((list) => (
+                          <Link
+                            key={list.id}
+                            href={`/contacts?list_id=${list.id}`}
+                            className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800 hover:bg-green-200 transition-colors"
+                          >
+                            {list.metadata.name}
+                          </Link>
+                        ))}
+                      </div>
+                    </dd>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Campaign Statistics */}
+            {campaign.metadata.stats && (
+              <div className="bg-white rounded-lg shadow p-6">
+                <h2 className="text-xl font-semibold text-gray-900 mb-4">Campaign Statistics</h2>
+                
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-gray-900">{campaign.metadata.stats.sent || 0}</div>
+                    <div className="text-sm text-gray-500">Sent</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-600">{campaign.metadata.stats.opened || 0}</div>
+                    <div className="text-sm text-gray-500">Opened</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">{campaign.metadata.stats.clicked || 0}</div>
+                    <div className="text-sm text-gray-500">Clicked</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-red-600">{campaign.metadata.stats.bounced || 0}</div>
+                    <div className="text-sm text-gray-500">Bounced</div>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-4">
+                  <div className="text-center">
+                    <div className="text-lg font-semibold text-gray-900">{campaign.metadata.stats.open_rate || '0%'}</div>
+                    <div className="text-sm text-gray-500">Open Rate</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-semibold text-gray-900">{campaign.metadata.stats.click_rate || '0%'}</div>
+                    <div className="text-sm text-gray-500">Click Rate</div>
+                  </div>
+                </div>
+              </div>
             )}
 
-            {/* Delete Campaign Section - Moved to bottom like template page */}
-            {status === "Draft" && (
-              <div className="border-t pt-8 mt-8">
-                <Card className="border-red-200 bg-red-50/50">
-                  <CardHeader>
-                    <CardTitle className="text-red-800 flex items-center space-x-2">
-                      <Trash2 className="h-5 w-5" />
-                      <span>Danger Zone</span>
-                    </CardTitle>
-                    <p className="text-red-700 text-sm">
-                      Permanently delete this campaign. This action cannot be
-                      undone.
-                    </p>
-                  </CardHeader>
-                  <CardContent>
-                    <DeleteCampaignButton
-                      campaignId={campaign.id}
-                      campaignName={campaign.metadata.name}
-                      isDraft={status === "Draft"}
-                    />
-                  </CardContent>
-                </Card>
+            {/* Sending Progress */}
+            {campaign.metadata.sending_progress && campaign.metadata.status.value === 'Sending' && (
+              <div className="bg-white rounded-lg shadow p-6">
+                <h2 className="text-xl font-semibold text-gray-900 mb-4">Sending Progress</h2>
+                
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex justify-between text-sm font-medium text-gray-900 mb-1">
+                      <span>Progress</span>
+                      <span>{campaign.metadata.sending_progress.progress_percentage}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
+                        style={{ width: `${campaign.metadata.sending_progress.progress_percentage}%` }}
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-4 text-center">
+                    <div>
+                      <div className="text-lg font-bold text-green-600">{campaign.metadata.sending_progress.sent}</div>
+                      <div className="text-sm text-gray-500">Sent</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-red-600">{campaign.metadata.sending_progress.failed}</div>
+                      <div className="text-sm text-gray-500">Failed</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-gray-600">{campaign.metadata.sending_progress.total}</div>
+                      <div className="text-sm text-gray-500">Total</div>
+                    </div>
+                  </div>
+
+                  {campaign.metadata.sending_progress.last_updated && (
+                    <div className="text-xs text-gray-500">
+                      Last updated: {new Date(campaign.metadata.sending_progress.last_updated).toLocaleString()}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
 
-          {/* Right Column - Actions & Stats */}
+          {/* Sidebar */}
           <div className="space-y-6">
-            {/* Send Campaign Card */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Send className="h-5 w-5" />
-                  <span>Campaign Actions</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <SendCampaignButton campaign={campaign} />
-              </CardContent>
-            </Card>
-
-            {/* Campaign Stats */}
-            {(status === "Sent" || status === "Sending") && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <TrendingUp className="h-5 w-5" />
-                    <span>Campaign Statistics</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {status === "Sending" &&
-                  campaign.metadata.sending_progress ? (
-                    <div className="space-y-4">
-                      <div>
-                        <div className="flex justify-between text-sm font-medium text-gray-700 mb-1">
-                          <span>Sending Progress</span>
-                          <span>
-                            {
-                              campaign.metadata.sending_progress
-                                .progress_percentage
-                            }
-                            %
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
-                          <div
-                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                            style={{
-                              width: `${campaign.metadata.sending_progress.progress_percentage}%`,
-                            }}
-                          ></div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <div className="text-gray-500">Sent</div>
-                          <div className="font-semibold">
-                            {campaign.metadata.sending_progress.sent}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-gray-500">Total</div>
-                          <div className="font-semibold">
-                            {campaign.metadata.sending_progress.total}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-gray-500">Failed</div>
-                          <div className="font-semibold text-red-600">
-                            {campaign.metadata.sending_progress.failed}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-gray-500">Last Batch</div>
-                          <div className="font-semibold">
-                            {new Date(
-                              campaign.metadata.sending_progress.last_batch_completed
-                            ).toLocaleTimeString()}
-                          </div>
-                        </div>
-                      </div>
+            {/* Template Preview */}
+            {template && (
+              <div className="bg-white rounded-lg shadow p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Template Preview</h3>
+                
+                <div className="border rounded-lg p-4 bg-gray-50 max-h-64 overflow-y-auto">
+                  <div className="text-sm">
+                    <div className="font-medium text-gray-900 mb-2">
+                      Subject: {campaign.metadata.template_snapshot?.subject || template.metadata.subject}
                     </div>
-                  ) : stats ? (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-gray-900">
-                          {stats.sent || 0}
-                        </div>
-                        <div className="text-sm text-gray-500">Sent</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-green-600">
-                          {stats.delivered || 0}
-                        </div>
-                        <div className="text-sm text-gray-500">Delivered</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-blue-600">
-                          {stats.opened || 0}
-                        </div>
-                        <div className="text-sm text-gray-500">Opened</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-purple-600">
-                          {stats.clicked || 0}
-                        </div>
-                        <div className="text-sm text-gray-500">Clicked</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-yellow-600">
-                          {stats.bounced || 0}
-                        </div>
-                        <div className="text-sm text-gray-500">Bounced</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-red-600">
-                          {stats.unsubscribed || 0}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          Unsubscribed
-                        </div>
-                      </div>
-                      <div className="text-center col-span-2 border-t pt-4 mt-4">
-                        <div className="flex justify-between">
-                          <div>
-                            <div className="text-lg font-bold text-blue-600">
-                              {stats.open_rate || "0%"}
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              Open Rate
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-lg font-bold text-purple-600">
-                              {stats.click_rate || "0%"}
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              Click Rate
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center text-gray-500">
-                      <TrendingUp className="mx-auto h-8 w-8 mb-2" />
-                      <p>Statistics will appear once the campaign is sent</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Schedule Info */}
-            {status === "Scheduled" && campaign.metadata.send_date && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Clock className="h-5 w-5" />
-                    <span>Scheduled Sending</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-center">
-                    <div className="text-lg font-semibold text-blue-600">
-                      {new Date(
-                        campaign.metadata.send_date
-                      ).toLocaleDateString()}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      at{" "}
-                      {new Date(
-                        campaign.metadata.send_date
-                      ).toLocaleTimeString()}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-2">
-                      Campaign will be automatically sent via scheduled
-                      processing
-                    </div>
+                    <div 
+                      className="text-gray-700 prose prose-sm max-w-none"
+                      dangerouslySetInnerHTML={{ 
+                        __html: campaign.metadata.template_snapshot?.content || template.metadata.content 
+                      }}
+                    />
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+
+                <div className="mt-4">
+                  <Link 
+                    href={`/templates/${template.id}/edit`}
+                    className="text-sm text-blue-600 hover:text-blue-800"
+                  >
+                    Edit Template →
+                  </Link>
+                </div>
+              </div>
             )}
+
+            {/* Quick Actions */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
+              
+              <div className="space-y-3">
+                <Link 
+                  href={`/campaigns/${campaign.id}/edit`}
+                  className="w-full btn-outline text-center"
+                >
+                  Edit Campaign
+                </Link>
+                
+                <Link 
+                  href="/campaigns/new"
+                  className="w-full btn-outline text-center"
+                >
+                  Duplicate Campaign
+                </Link>
+                
+                <Link 
+                  href="/contacts?list_id=all"
+                  className="w-full btn-outline text-center"
+                >
+                  View All Contacts
+                </Link>
+                
+                <Link 
+                  href="/templates"
+                  className="w-full btn-outline text-center"
+                >
+                  Browse Templates
+                </Link>
+              </div>
+            </div>
+
+            {/* Campaign Info */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Campaign Info</h3>
+              
+              <dl className="space-y-3">
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Created</dt>
+                  <dd className="text-sm text-gray-900">{new Date(campaign.created_at).toLocaleDateString()}</dd>
+                </div>
+                
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Last Modified</dt>
+                  <dd className="text-sm text-gray-900">{new Date(campaign.modified_at).toLocaleDateString()}</dd>
+                </div>
+                
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Campaign ID</dt>
+                  <dd className="text-sm text-gray-900 font-mono">{campaign.id}</dd>
+                </div>
+              </dl>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  );
+  )
 }

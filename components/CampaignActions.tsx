@@ -9,7 +9,7 @@ import {
   EmailList,
 } from "@/types";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/useToast";
+import { useToast } from "@/hooks/use-toast";
 import SendCampaignButton from "@/components/SendCampaignButton";
 import TestEmailModal from "@/components/TestEmailModal";
 import { Save, TestTube } from "lucide-react";
@@ -41,15 +41,33 @@ export default function CampaignActions({
   isLoading,
   onSubmit,
 }: CampaignActionsProps) {
+  const { toast } = useToast();
   const canEdit = campaign.metadata?.status?.value === "Draft";
   const status = campaign.metadata?.status?.value || "Draft";
+
+  const handleSubmit = async () => {
+    try {
+      await onSubmit();
+      toast({
+        title: "Success",
+        description: "Campaign updated successfully",
+        variant: "success",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update campaign",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <div className="space-y-4">
       {/* Update Campaign Button */}
       {canEdit && (
         <Button
-          onClick={onSubmit}
+          onClick={handleSubmit}
           disabled={isLoading || !formData.name}
           className="w-full bg-blue-600 hover:bg-blue-700 text-white"
         >

@@ -60,7 +60,7 @@ export default function ChunkedCSVUploadForm() {
 
   // Fetch available lists on component mount
   useEffect(() => {
-    fetchAvailableLists()
+    fetchAvaileLists()
   }, [])
 
   const fetchAvaileLists = async () => {
@@ -154,10 +154,12 @@ export default function ChunkedCSVUploadForm() {
 
         // Aggregate results
         for (const result of chunkResults) {
-          processedContacts += result.results.successful + result.results.creation_errors + result.results.duplicates
-          successfulContacts += result.results.successful
-          if (result.errors) {
-            errors.push(...result.errors)
+          if (result && result.results) {
+            processedContacts += result.results.successful + result.results.creation_errors + result.results.duplicates
+            successfulContacts += result.results.successful
+            if (result.errors) {
+              errors.push(...result.errors)
+            }
           }
         }
 
@@ -167,7 +169,7 @@ export default function ChunkedCSVUploadForm() {
         const remainingContacts = contacts.length - processedContacts
         const estimatedTimeRemaining = estimateProcessingTime(remainingContacts, contactsPerSecond)
 
-        setUploadProgress(prev => ({
+        setUploadProgress(prev => prev ? ({
           processed: processedContacts,
           total: contacts.length,
           percentage: Math.round((processedContacts / contacts.length) * 100),
@@ -177,7 +179,7 @@ export default function ChunkedCSVUploadForm() {
           contactsPerSecond: Math.round(contactsPerSecond),
           isPaused: false,
           batchId
-        }))
+        }) : null)
 
         console.log(`Processed ${processedContacts}/${contacts.length} contacts (${Math.round(contactsPerSecond)}/sec)`)
 
@@ -309,7 +311,7 @@ export default function ChunkedCSVUploadForm() {
         }
 
         // Simple CSV parsing (you might want to use the enhanced parsing from the original)
-        const headers = lines[0].split(',').map(h => h.replace(/^["']|["']$/g, '').trim())
+        const headers = lines[0]?.split(',').map(h => h.replace(/^["']|["']$/g, '').trim()) || []
         const emailIndex = headers.findIndex(h => h.toLowerCase().includes('email'))
         const nameIndex = headers.findIndex(h => h.toLowerCase().includes('name') || h.toLowerCase().includes('first'))
 
@@ -320,18 +322,21 @@ export default function ChunkedCSVUploadForm() {
         // Parse rows into contacts
         const contacts = []
         for (let i = 1; i < lines.length; i++) {
-          const row = lines[i].split(',').map(cell => cell.replace(/^["']|["']$/g, '').trim())
-          if (row[emailIndex] && row[nameIndex]) {
-            contacts.push({
-              first_name: row[nameIndex],
-              last_name: '',
-              email: row[emailIndex].toLowerCase(),
-              status: 'Active' as const,
-              list_ids: selectedListIds,
-              tags: [],
-              subscribe_date: new Date().toISOString().split('T')[0],
-              notes: ''
-            })
+          const line = lines[i]
+          if (line) {
+            const row = line.split(',').map(cell => cell.replace(/^["']|["']$/g, '').trim())
+            if (row[emailIndex] && row[nameIndex]) {
+              contacts.push({
+                first_name: row[nameIndex] || '',
+                last_name: '',
+                email: (row[emailIndex] || '').toLowerCase(),
+                status: 'Active' as const,
+                list_ids: selectedListIds,
+                tags: [],
+                subscribe_date: new Date().toISOString().split('T')[0],
+                notes: ''
+              })
+            }
           }
         }
 
@@ -590,19 +595,19 @@ export default function ChunkedCSVUploadForm() {
                           htmlFor={`list-${list.id}`}
                           className="text-sm font-medium text-gray-900 cursor-pointer"
                         >
-                          {list.metadata.name}
+                          {list.metadata?.name}
                         </label>
-                        {list.metadata.description && (
+                        {list.metadata?.description && (
                           <p className="text-sm text-gray-600 mt-1">
                             {list.metadata.description}
                           </p>
                         )}
                         <div className="flex items-center space-x-3 mt-2">
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                            {list.metadata.list_type?.value || 'General'}
+                            {list.metadata?.list_type?.value || 'General'}
                           </span>
                           <span className="text-xs text-gray-500">
-                            {list.metadata.total_contacts || 0} contacts
+                            {list.metadata?.total_contacts || 0} contacts
                           </span>
                         </div>
                       </div>

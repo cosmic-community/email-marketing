@@ -143,9 +143,12 @@ export default function ChunkedCSVUploadForm() {
 
       // Create promises for concurrent chunks
       for (let j = i; j < Math.min(i + MAX_CONCURRENT_CHUNKS, chunks.length); j++) {
-        chunkPromises.push(
-          processChunk(chunks[j], j, batchId, selectedListIds)
-        )
+        const currentChunk = chunks[j]
+        if (currentChunk && currentChunk.length > 0) {
+          chunkPromises.push(
+            processChunk(currentChunk, j, batchId, selectedListIds)
+          )
+        }
       }
 
       try {
@@ -342,9 +345,13 @@ export default function ChunkedCSVUploadForm() {
 
         console.log(`Parsed ${contacts.length} contacts for chunked processing`)
 
-        // Process in chunks
-        const result = await processContactsInChunks(contacts, batchId)
-        setUploadResult(result as UploadResult)
+        // Process in chunks - FIXED: Add null check for contacts array
+        if (contacts && contacts.length > 0) {
+          const result = await processContactsInChunks(contacts, batchId)
+          setUploadResult(result as UploadResult)
+        } else {
+          throw new Error('No valid contacts found in the CSV file')
+        }
 
       } else {
         console.log(`Small file (${estimatedRows} rows), using standard processing`)

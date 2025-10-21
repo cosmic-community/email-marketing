@@ -224,14 +224,14 @@ async function processCampaignBatch(
   campaign: MarketingCampaign,
   settings: any
 ) {
-  // Get all target contacts for this campaign with responsible pagination
-  // Limit to prevent memory issues and timeouts
+  // FIXED: Get all target contacts for this campaign with REMOVED artificial limits
+  // Changed: Removed the 10K limit that was preventing Community Spotlight from processing all 37K contacts
   const allContacts = await getCampaignTargetContacts(campaign, {
-    maxContactsPerList: 2500, // Reduced limit per list for better performance
-    totalMaxContacts: 10000, // Overall safety limit to prevent timeouts
+    maxContactsPerList: 15000, // Changed: Increased from 2500 to 15000 for better large campaign support  
+    totalMaxContacts: 100000, // Changed: Removed artificial 10K limit - increased to 100K for large campaigns
   });
   console.log(
-    `📊 Campaign ${campaign.id}: Fetched ${allContacts.length} total target contacts (with pagination limits applied)`
+    `📊 Campaign ${campaign.id}: Fetched ${allContacts.length} total target contacts (FIXED: removed 10K artificial limit)`
   );
 
   // CRITICAL: Filter out contacts that have already been sent to (including pending)

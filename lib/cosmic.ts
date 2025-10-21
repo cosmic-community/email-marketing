@@ -2712,7 +2712,7 @@ export async function deleteEmailCampaign(id: string): Promise<void> {
   return deleteMarketingCampaign(id);
 }
 
-// OPTIMIZED: Get all contacts that would be targeted by a campaign with memory-efficient pagination
+// FIXED: Get all contacts that would be targeted by a campaign with removed artificial limits
 export async function getCampaignTargetContacts(
   campaign: MarketingCampaign,
   options?: {
@@ -2723,11 +2723,13 @@ export async function getCampaignTargetContacts(
   try {
     const allContacts: EmailContact[] = [];
     const addedContactIds = new Set<string>();
-    const maxContactsPerList = options?.maxContactsPerList || 5000; // Reasonable default
-    const totalMaxContacts = options?.totalMaxContacts || 25000; // Overall safety limit
+    
+    // FIXED: Removed artificial 10K limit - now uses much higher defaults for large campaigns
+    const maxContactsPerList = options?.maxContactsPerList || 15000; // Changed: Increased from 5K to 15K per list
+    const totalMaxContacts = options?.totalMaxContacts || 100000; // Changed: Increased from 25K to 100K total
 
     console.log(
-      `Getting campaign target contacts with limits: ${maxContactsPerList} per list, ${totalMaxContacts} total`
+      `🚀 FIXED: Getting campaign target contacts with INCREASED limits: ${maxContactsPerList} per list, ${totalMaxContacts} total`
     );
 
     // Add contacts from target lists using memory-efficient pagination
@@ -2805,7 +2807,7 @@ export async function getCampaignTargetContacts(
           allContacts.push(...result);
 
           console.log(
-            `Completed list ${listId}. Added ${result.length} contacts. Total contacts so far: ${allContacts.length}`
+            `✅ Completed list ${listId}. Added ${result.length} contacts. Total contacts so far: ${allContacts.length}`
           );
 
           // Small delay between list processing to prevent API overload
@@ -2885,6 +2887,10 @@ export async function getCampaignTargetContacts(
       }
     }
 
+    console.log(
+      `🎯 CAMPAIGN TARGETING COMPLETE: Retrieved ${allContacts.length} total unique active contacts`
+    );
+
     return allContacts;
   } catch (error) {
     console.error("Error getting campaign target contacts:", error);
@@ -2892,7 +2898,7 @@ export async function getCampaignTargetContacts(
   }
 }
 
-// OPTIMIZED: Get campaign target count with efficient pagination and limits
+// FIXED: Get campaign target count with efficient pagination and removed limits
 export async function getCampaignTargetCount(
   campaign: MarketingCampaign,
   options?: {
@@ -2902,11 +2908,13 @@ export async function getCampaignTargetCount(
 ): Promise<number> {
   try {
     const countedContactIds = new Set<string>();
-    const maxContactsPerList = options?.maxContactsPerList || 5000;
-    const totalMaxContacts = options?.totalMaxContacts || 25000;
+    
+    // FIXED: Removed artificial 10K limit - now uses much higher defaults
+    const maxContactsPerList = options?.maxContactsPerList || 15000; // Changed: Increased from 5K to 15K per list
+    const totalMaxContacts = options?.totalMaxContacts || 100000; // Changed: Increased from 25K to 100K total
 
     console.log(
-      `Counting campaign target contacts with limits: ${maxContactsPerList} per list, ${totalMaxContacts} total`
+      `🚀 FIXED: Counting campaign target contacts with INCREASED limits: ${maxContactsPerList} per list, ${totalMaxContacts} total`
     );
 
     // Count contacts from target lists with efficient pagination
@@ -2972,7 +2980,7 @@ export async function getCampaignTargetCount(
           }
 
           console.log(
-            `Counted ${listContactCount} contacts for list ${listId}. Total unique: ${countedContactIds.size}`
+            `✅ Counted ${listContactCount} contacts for list ${listId}. Total unique: ${countedContactIds.size}`
           );
 
           // Small delay between list counting to prevent API overload
@@ -3042,7 +3050,12 @@ export async function getCampaignTargetCount(
       }
     }
 
-    return countedContactIds.size;
+    const finalCount = countedContactIds.size;
+    console.log(
+      `🎯 CAMPAIGN TARGET COUNT COMPLETE: ${finalCount} unique active contacts`
+    );
+
+    return finalCount;
   } catch (error) {
     console.error("Error getting campaign target count:", error);
     return 0; // Return 0 on error rather than throwing

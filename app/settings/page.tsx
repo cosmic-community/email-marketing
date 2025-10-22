@@ -1,10 +1,11 @@
-import { getSettings } from '@/lib/cosmic'
+import { Suspense } from 'react'
 import SettingsForm from '@/components/SettingsForm'
+import { getSettings } from '@/lib/cosmic'
 
 // Force dynamic rendering - prevents static generation and caching
 export const dynamic = 'force-dynamic'
 
-export default async function SettingsPage() {
+async function SettingsContent() {
   let settings = null
   
   try {
@@ -13,6 +14,30 @@ export default async function SettingsPage() {
     console.error('Error fetching settings:', error)
   }
 
+  return <SettingsForm initialSettings={settings} />
+}
+
+function SettingsLoadingSkeleton() {
+  return (
+    <div className="space-y-6">
+      {/* Form skeleton */}
+      <div className="space-y-4">
+        <div className="h-12 bg-gray-200 rounded animate-pulse"></div>
+        <div className="space-y-4">
+          {[...Array(8)].map((_, i) => (
+            <div key={i} className="space-y-2">
+              <div className="h-4 bg-gray-200 rounded w-1/4 animate-pulse"></div>
+              <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
+            </div>
+          ))}
+        </div>
+        <div className="h-10 bg-gray-200 rounded w-32 animate-pulse"></div>
+      </div>
+    </div>
+  )
+}
+
+export default function SettingsPage() {
   return (
     <div className="min-h-screen bg-gray-50 pb-16">
       {/* Page Header */}
@@ -25,9 +50,11 @@ export default async function SettingsPage() {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content with Suspense for streaming */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <SettingsForm initialSettings={settings} />
+        <Suspense fallback={<SettingsLoadingSkeleton />}>
+          <SettingsContent />
+        </Suspense>
       </main>
     </div>
   )

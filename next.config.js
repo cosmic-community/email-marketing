@@ -12,8 +12,30 @@ const nextConfig = {
   },
   experimental: {
     serverActions: {
-      allowedOrigins: ["localhost:3000", "*.vercel.app"],
+      allowedOrigins: ["localhost:3000", "*.vercel.app", "www.cosmicmailer.com", "cosmicmailer.com"],
     },
+  },
+  // Add security headers
+  async headers() {
+    return [
+      {
+        source: '/api/:path*',
+        headers: [
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+          {
+            key: 'X-Frame-Options',
+            value: 'DENY',
+          },
+          {
+            key: 'X-XSS-Protection',
+            value: '1; mode=block',
+          },
+        ],
+      },
+    ]
   },
 }
 

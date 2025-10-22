@@ -16,19 +16,19 @@ import { createUnsubscribeUrl, addTrackingToEmail } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
 // Rate limiting configuration optimized for MongoDB/Lambda
-// BALANCED CONFIGURATION - Optimized for ~134K emails/day with 3-minute cron
+// OPTIMIZED CONFIGURATION - Optimized for ~22.5K emails/hour with 2-minute cron
 const EMAILS_PER_SECOND = 8; // Stay safely under 10/sec limit with 20% buffer
 const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~125ms per email
 const BATCH_SIZE = 50; // Increased from 25 - safe with pagination protection
-const MAX_BATCHES_PER_RUN = 8; // Increased from 5 - reasonable for Lambda timeout
+const MAX_BATCHES_PER_RUN = 15; // OPTIMIZED: Increased from 8 for faster sending
 const DELAY_BETWEEN_DB_OPERATIONS = 75; // Reduced from 100ms - faster DB operations
 const DELAY_BETWEEN_BATCHES = 400; // Reduced from 500ms - faster batch processing
 
-// CAPACITY METRICS (with 3-minute cron interval):
-// - Per run: ~400 emails (50 × 8 batches)
-// - Per hour: ~8,000 emails (480 runs)
-// - Per day: ~134,000 emails (with pagination safety limits)
-// - 10K campaign completion: ~1.75 hours (~35 runs)
+// CAPACITY METRICS (with 2-minute cron interval):
+// - Per run: ~750 emails (50 × 15 batches)
+// - Per hour: ~22,500 emails (30 runs)
+// - Per day: ~540,000 emails (with pagination safety limits)
+// - 30K campaign completion: ~1.3 hours (~40 runs)
 
 export async function GET(request: NextRequest) {
   try {
@@ -227,7 +227,7 @@ async function processCampaignBatch(
   // FIXED: Get all target contacts for this campaign with REMOVED artificial limits
   // Changed: Removed the 10K limit that was preventing Community Spotlight from processing all 37K contacts
   const allContacts = await getCampaignTargetContacts(campaign, {
-    maxContactsPerList: 15000, // Changed: Increased from 2500 to 15000 for better large campaign support  
+    maxContactsPerList: 15000, // Changed: Increased from 2500 to 15000 for better large campaign support
     totalMaxContacts: 100000, // Changed: Removed artificial 10K limit - increased to 100K for large campaigns
   });
   console.log(

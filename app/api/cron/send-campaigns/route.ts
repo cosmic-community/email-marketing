@@ -35,15 +35,20 @@ const DELAY_BETWEEN_BATCHES = 300; // Optimized - reduced from 400ms
 //
 // THE PROBLEM:
 // - With 2-minute cron intervals and aggressive batch processing, multiple cron jobs can run concurrently
+// - Cosmic auto-appends UUIDs to duplicate slugs (no unique constraint enforcement)
 // - Without locking, two jobs could both:
 //   1. Fetch the same campaign contacts
 //   2. Filter unsent contacts (both see same contacts as "unsent")
 //   3. Reserve and send to the SAME contacts = DUPLICATE EMAILS
 //
-// THE SOLUTION:
-// - Campaign-level locks ensure only ONE cron job processes a campaign at a time
-// - Combined with slug-based uniqueness constraints in reserveContactsForSending()
-// - This creates a two-layer defense: process-level locks + database-level constraints
+// THE SOLUTION (Two-Layer Defense):
+// Layer 1: Campaign-level locks ensure only ONE cron job processes a campaign at a time
+// Layer 2: Check-before-insert in reserveContactsForSending() verifies no existing send records
+//
+// WHY BOTH LAYERS ARE NEEDED:
+// - Campaign locks prevent concurrent processing of the same campaign (primary defense)
+// - Check-before-insert catches edge cases where locks might fail/expire
+// - This ensures ZERO duplicate emails even in distributed serverless environments
 //
 const PROCESSING_CAMPAIGNS = new Map<
   string,

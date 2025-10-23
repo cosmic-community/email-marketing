@@ -125,13 +125,43 @@ export async function reserveContactsForSending(
   const RESERVATION_DELAY = 150; // Increased from 50ms to 150ms (3x slower = gentler on DB)
   let processedCount = 0;
 
-  // CRITICAL FIX: Process reservations sequentially with proper error handling
+  // CRITICAL FIX: Process reservations with check-before-insert to prevent duplicates
+  // NOTE: Cosmic auto-appends UUIDs to duplicate slugs, so we MUST check for existing records
   for (const contact of contactsToReserve) {
     try {
-      // Create deterministic slug for uniqueness constraint
+      // STEP 1: Check if a send record already exists for this campaign+contact
+      // This is our REAL duplicate prevention since Cosmic doesn't enforce unique slugs
+      try {
+        const { objects: existingRecords } = await cosmic.objects
+          .find({
+            type: "campaign-sends",
+            "metadata.campaign": campaignId,
+            "metadata.contact": contact.id,
+          })
+          .props(["id"])
+          .limit(1);
+
+        if (existingRecords.length > 0) {
+          // Already reserved by another process - skip
+          console.log(
+            `⏭️  Contact ${contact.id} already has send record, skipping`
+          );
+          continue;
+        }
+      } catch (checkError: any) {
+        // 404 means no record exists, which is what we want
+        if (!hasStatus(checkError) || checkError.status !== 404) {
+          console.error(
+            `Error checking existing send record for contact ${contact.id}:`,
+            checkError.message
+          );
+          continue; // Skip this contact on error to be safe
+        }
+      }
+
+      // STEP 2: No existing record found, safe to insert
       const uniqueSlug = `send-${campaignId}-${contact.id}`;
 
-      // Try to atomically create the record
       const { object } = await cosmic.objects.insertOne({
         type: "campaign-sends",
         title: `Send: Campaign ${campaignId} to ${contact.metadata.email}`,
@@ -150,21 +180,7 @@ export async function reserveContactsForSending(
       reserved.push(contact);
       pendingRecordIds.set(contact.id, object.id);
     } catch (error: any) {
-      const errorMessage = error.message?.toLowerCase() || "";
-
-      if (
-        errorMessage.includes("slug") ||
-        errorMessage.includes("unique") ||
-        errorMessage.includes("duplicate")
-      ) {
-        // Already reserved by another process - skip silently
-        console.log(
-          `⏭️  Contact ${contact.id} already reserved by another process`
-        );
-        continue;
-      }
-
-      // Other errors - log but continue
+      // Log insertion errors but continue
       console.error(`✗ Error reserving contact ${contact.id}:`, error.message);
       continue;
     }

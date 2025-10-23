@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Loader2, CheckCircle, AlertCircle, Mail } from 'lucide-react'
+import { Loader2, CheckCircle, AlertCircle, Mail, Shield } from 'lucide-react'
 
 export default function SubscriptionForm() {
   const [email, setEmail] = useState('')
@@ -13,6 +13,32 @@ export default function SubscriptionForm() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [message, setMessage] = useState('')
+  
+  // Bot protection states
+  const [honeypot, setHoneypot] = useState('') // Honeypot field - should remain empty
+  const [formStartTime, setFormStartTime] = useState<number>(0)
+  const [hasUserInteracted, setHasUserInteracted] = useState(false)
+  const [botProtectionReady, setBotProtectionReady] = useState(false)
+  const formRef = useRef<HTMLFormElement>(null)
+
+  // Initialize bot protection on mount
+  useEffect(() => {
+    setFormStartTime(Date.now())
+    
+    // Mark protection as ready after a short delay
+    const timer = setTimeout(() => {
+      setBotProtectionReady(true)
+    }, 1000)
+
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Track user interactions to distinguish from bots
+  const handleUserInteraction = () => {
+    if (!hasUserInteracted) {
+      setHasUserInteracted(true)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -20,6 +46,38 @@ export default function SubscriptionForm() {
     if (!email) {
       setStatus('error')
       setMessage('Email is required')
+      return
+    }
+
+    // Bot protection checks
+    const submissionTime = Date.now()
+    const timeSpent = submissionTime - formStartTime
+    
+    // Check if form was submitted too quickly (likely a bot)
+    if (timeSpent < 2000) {
+      setStatus('error')
+      setMessage('Please take a moment to review your information before submitting.')
+      return
+    }
+
+    // Check if user has actually interacted with the form
+    if (!hasUserInteracted) {
+      setStatus('error')
+      setMessage('Please fill out the form manually.')
+      return
+    }
+
+    // Check honeypot field - should be empty for real users
+    if (honeypot.trim() !== '') {
+      setStatus('error')
+      setMessage('Spam detected. Please try again.')
+      return
+    }
+
+    // Check if bot protection is ready
+    if (!botProtectionReady) {
+      setStatus('error')
+      setMessage('Please wait a moment and try again.')
       return
     }
 
@@ -36,7 +94,19 @@ export default function SubscriptionForm() {
           email,
           first_name: firstName,
           last_name: lastName,
-          source: 'Landing Page'
+          source: 'Landing Page',
+          // Include bot protection metadata
+          bot_protection: {
+            time_spent: timeSpent,
+            user_interacted: hasUserInteracted,
+            form_start_time: formStartTime,
+            submission_time: submissionTime,
+            honeypot_filled: honeypot.trim() !== '',
+            user_agent: navigator.userAgent,
+            screen_resolution: `${screen.width}x${screen.height}`,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            language: navigator.language
+          }
         })
       })
 
@@ -48,6 +118,8 @@ export default function SubscriptionForm() {
         setEmail('')
         setFirstName('')
         setLastName('')
+        setHoneypot('')
+        setHasUserInteracted(false)
       } else {
         setStatus('error')
         setMessage(data.error || 'Failed to subscribe. Please try again.')
@@ -84,6 +156,8 @@ export default function SubscriptionForm() {
           onClick={() => {
             setStatus('idle')
             setMessage('')
+            setFormStartTime(Date.now())
+            setHasUserInteracted(false)
           }}
           variant="outline"
           className="mt-4"
@@ -95,7 +169,13 @@ export default function SubscriptionForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
+      {/* Bot Protection Notice */}
+      <div className="flex items-center space-x-2 text-sm text-gray-500 bg-gray-50 p-3 rounded-md">
+        <Shield className="w-4 h-4 text-green-600" />
+        <span>Protected by advanced bot detection</span>
+      </div>
+
       <div>
         <Label htmlFor="email" className="text-base font-medium">
           Email Address *
@@ -104,7 +184,11 @@ export default function SubscriptionForm() {
           id="email"
           type="email"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => {
+            setEmail(e.target.value)
+            handleUserInteraction()
+          }}
+          onFocus={handleUserInteraction}
           placeholder="Enter your email address"
           required
           disabled={isSubmitting}
@@ -121,7 +205,11 @@ export default function SubscriptionForm() {
             id="firstName"
             type="text"
             value={firstName}
-            onChange={(e) => setFirstName(e.target.value)}
+            onChange={(e) => {
+              setFirstName(e.target.value)
+              handleUserInteraction()
+            }}
+            onFocus={handleUserInteraction}
             placeholder="Your first name"
             disabled={isSubmitting}
             className="mt-2 text-base h-12"
@@ -136,12 +224,30 @@ export default function SubscriptionForm() {
             id="lastName"
             type="text"
             value={lastName}
-            onChange={(e) => setLastName(e.target.value)}
+            onChange={(e) => {
+              setLastName(e.target.value)
+              handleUserInteraction()
+            }}
+            onFocus={handleUserInteraction}
             placeholder="Your last name"
             disabled={isSubmitting}
             className="mt-2 text-base h-12"
           />
         </div>
+      </div>
+
+      {/* Honeypot field - hidden from users, should remain empty */}
+      <div style={{ position: 'absolute', left: '-9999px', visibility: 'hidden' }}>
+        <Label htmlFor="website">Website (leave blank)</Label>
+        <Input
+          id="website"
+          name="website"
+          type="text"
+          value={honeypot}
+          onChange={(e) => setHoneypot(e.target.value)}
+          tabIndex={-1}
+          autoComplete="off"
+        />
       </div>
 
       {status === 'error' && (
@@ -153,13 +259,18 @@ export default function SubscriptionForm() {
 
       <Button
         type="submit"
-        disabled={isSubmitting || !email}
+        disabled={isSubmitting || !email || !botProtectionReady}
         className="w-full h-12 text-base font-medium"
       >
         {isSubmitting ? (
           <>
             <Loader2 className="w-5 h-5 mr-2 animate-spin" />
             Subscribing...
+          </>
+        ) : !botProtectionReady ? (
+          <>
+            <Shield className="w-5 h-5 mr-2" />
+            Initializing Security...
           </>
         ) : (
           'Join Our Newsletter'
@@ -172,6 +283,9 @@ export default function SubscriptionForm() {
         </p>
         <p className="text-xs text-gray-400">
           We'll never share your email with anyone else.
+        </p>
+        <p className="text-xs text-gray-400">
+          This form is protected against spam and automated submissions.
         </p>
       </div>
     </form>

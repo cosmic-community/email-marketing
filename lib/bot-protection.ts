@@ -218,7 +218,14 @@ export function detectVPN(clientIP: string): boolean {
   ]
   
   // This is a simplified check - implement proper IP range checking
-  return vpnRanges.some(range => clientIP.startsWith(range.split('/')[0].slice(0, -1)))
+  // Changed: Fixed TS2532 error by adding null check for range.split result
+  return vpnRanges.some(range => {
+    const rangePrefix = range.split('/')[0];
+    if (rangePrefix) {
+      return clientIP.startsWith(rangePrefix.slice(0, -1));
+    }
+    return false;
+  })
 }
 
 export function analyzeEmailPattern(email: string): {
@@ -248,17 +255,20 @@ export function analyzeEmailPattern(email: string): {
   }
   
   // Check for suspicious patterns
+  // Changed: Fixed TS2345 error by adding null check for localPart
   if (localPart && localPart.length > 30) {
     isSuspicious = true
     risk_score += 20
   }
   
-  if (/\d{5,}/.test(localPart)) {
+  // Changed: Fixed TS2345 error by adding null check for localPart
+  if (localPart && /\d{5,}/.test(localPart)) {
     isSuspicious = true
     risk_score += 15
   }
   
-  if (/^[a-z]+\d+$/.test(localPart)) {
+  // Changed: Fixed TS2345 error by adding null check for localPart
+  if (localPart && /^[a-z]+\d+$/.test(localPart)) {
     risk_score += 10
   }
   

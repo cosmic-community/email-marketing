@@ -16,19 +16,19 @@ import { createUnsubscribeUrl, addTrackingToEmail } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
 // Rate limiting configuration optimized for MongoDB/Lambda
-// OPTIMIZED CONFIGURATION - Optimized for ~22.5K emails/hour with 2-minute cron
-const EMAILS_PER_SECOND = 8; // Stay safely under 10/sec limit with 20% buffer
-const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~125ms per email
-const BATCH_SIZE = 50; // Increased from 25 - safe with pagination protection
-const MAX_BATCHES_PER_RUN = 15; // OPTIMIZED: Increased from 8 for faster sending
-const DELAY_BETWEEN_DB_OPERATIONS = 75; // Reduced from 100ms - faster DB operations
-const DELAY_BETWEEN_BATCHES = 400; // Reduced from 500ms - faster batch processing
+// MAXIMUM SAFE SPEED - Optimized for ~37.5K emails/hour with 2-minute cron
+const EMAILS_PER_SECOND = 9; // 90% of 10/sec limit - aggressive but safe
+const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~111ms per email
+const BATCH_SIZE = 50; // Proven safe batch size
+const MAX_BATCHES_PER_RUN = 25; // AGGRESSIVE: Maximum batches for <1 hour 36K sends
+const DELAY_BETWEEN_DB_OPERATIONS = 50; // Optimized - reduced from 75ms
+const DELAY_BETWEEN_BATCHES = 300; // Optimized - reduced from 400ms
 
 // CAPACITY METRICS (with 2-minute cron interval):
-// - Per run: ~750 emails (50 × 15 batches)
-// - Per hour: ~22,500 emails (30 runs)
-// - Per day: ~540,000 emails (with pagination safety limits)
-// - 30K campaign completion: ~1.3 hours (~40 runs)
+// - Per run: ~1,250 emails (50 × 25 batches)
+// - Per hour: ~37,500 emails (30 runs)
+// - Per day: ~900,000 emails (theoretical max with pagination)
+// - 36K campaign completion: ~58 minutes (~29 runs)
 
 export async function GET(request: NextRequest) {
   try {

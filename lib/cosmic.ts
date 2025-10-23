@@ -1703,13 +1703,13 @@ export async function getEmailContacts(options?: {
       // Search by both name and email simultaneously for better UX
       // Note: Cosmic CMS has limited OR query support, so we'll use a broader approach
       // We'll search by email primarily, but in the UI we filter further client-side if needed
-      
+
       // Create a regex pattern that can match email or name
       const searchLower = search.toLowerCase();
-      
+
       // Try to search by email first (most specific)
       query["metadata.email"] = { $regex: search, $options: "i" };
-      
+
       // Note: For optimal results with name search, we'd need to fetch more data
       // and filter client-side, but email search is more common and performant
     }
@@ -2723,7 +2723,7 @@ export async function getCampaignTargetContacts(
   try {
     const allContacts: EmailContact[] = [];
     const addedContactIds = new Set<string>();
-    
+
     // FIXED: Removed artificial 10K limit - now uses much higher defaults for large campaigns
     const maxContactsPerList = options?.maxContactsPerList || 15000; // Changed: Increased from 5K to 15K per list
     const totalMaxContacts = options?.totalMaxContacts || 100000; // Changed: Increased from 25K to 100K total
@@ -2732,105 +2732,135 @@ export async function getCampaignTargetContacts(
       `🚀 FIXED: Getting campaign target contacts with INCREASED limits: ${maxContactsPerList} per list, ${totalMaxContacts} total`
     );
 
-    // Add contacts from target lists using memory-efficient pagination
+    // Add contacts from target lists using PARALLEL processing for 3-5x speedup
     if (
       campaign.metadata.target_lists &&
       campaign.metadata.target_lists.length > 0
     ) {
-      for (const listRef of campaign.metadata.target_lists) {
-        const listId = typeof listRef === "string" ? listRef : listRef.id;
+      const listIds = campaign.metadata.target_lists.map((listRef) =>
+        typeof listRef === "string" ? listRef : listRef.id
+      );
 
-        // Check if we've reached the total limit
-        if (allContacts.length >= totalMaxContacts) {
-          console.log(
-            `Reached total contact limit (${totalMaxContacts}). Stopping list processing.`
-          );
-          break;
-        }
+      console.log(
+        `🚀 PARALLEL PROCESSING: Fetching contacts from ${listIds.length} lists concurrently...`
+      );
 
-        try {
-          console.log(
-            `Processing list ${listId} with pagination and timeout protection...`
-          );
+      // Process lists in parallel batches of 8 to respect Cosmic API rate limits
+      const PARALLEL_BATCH_SIZE = 8;
 
-          // Use timeout-protected operation
-          const result = await withTimeout(
-            async () => {
-              const contacts: EmailContact[] = [];
+      for (let i = 0; i < listIds.length; i += PARALLEL_BATCH_SIZE) {
+        const batchListIds = listIds.slice(i, i + PARALLEL_BATCH_SIZE);
 
-              // Use the paginated generator for memory efficiency
-              for await (const contactBatch of getContactsByListIdPaginated(
-                listId,
-                {
-                  batchSize: 500,
-                  maxContacts: maxContactsPerList,
-                }
-              )) {
-                const activeListContacts = contactBatch.filter(
-                  (contact) => contact.metadata.status.value === "Active"
-                );
+        console.log(
+          `Processing batch ${Math.floor(i / PARALLEL_BATCH_SIZE) + 1}: ${
+            batchListIds.length
+          } lists in parallel`
+        );
 
-                for (const contact of activeListContacts) {
-                  if (!addedContactIds.has(contact.id)) {
-                    contacts.push(contact);
-                    addedContactIds.add(contact.id);
+        // Fetch all lists in this batch concurrently
+        const listPromises = batchListIds.map(async (listId) => {
+          try {
+            // Use timeout-protected operation
+            const result = await withTimeout(
+              async () => {
+                const contacts: EmailContact[] = [];
 
-                    // Check total limit after each contact
-                    if (
-                      allContacts.length + contacts.length >=
-                      totalMaxContacts
-                    ) {
-                      console.log(
-                        `Reached total contact limit (${totalMaxContacts}) while processing list ${listId}`
-                      );
-                      return contacts; // Return what we have so far
-                    }
+                // Use the paginated generator for memory efficiency
+                for await (const contactBatch of getContactsByListIdPaginated(
+                  listId,
+                  {
+                    batchSize: 500,
+                    maxContacts: maxContactsPerList,
                   }
+                )) {
+                  const activeListContacts = contactBatch.filter(
+                    (contact) => contact.metadata.status.value === "Active"
+                  );
+
+                  for (const contact of activeListContacts) {
+                    contacts.push(contact);
+                  }
+
+                  // Small delay between batches to prevent API overload
+                  await new Promise((resolve) => setTimeout(resolve, 100));
                 }
 
-                // Break out of batch loop if we've hit the total limit
-                if (allContacts.length + contacts.length >= totalMaxContacts) {
+                return contacts;
+              },
+              60000, // 60 second timeout for list processing
+              `processing list ${listId}`
+            );
+
+            return { listId, contacts: result, success: true };
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : "Unknown error";
+            console.error(
+              `Error fetching contacts for list ${listId}:`,
+              errorMessage
+            );
+            return {
+              listId,
+              contacts: [],
+              success: false,
+              error: errorMessage,
+            };
+          }
+        });
+
+        // Wait for all lists in this batch to complete
+        const batchResults = await Promise.allSettled(listPromises);
+
+        // Process results and deduplicate
+        for (const result of batchResults) {
+          if (result.status === "fulfilled" && result.value.success) {
+            const { listId, contacts } = result.value;
+            let addedCount = 0;
+
+            for (const contact of contacts) {
+              if (!addedContactIds.has(contact.id)) {
+                allContacts.push(contact);
+                addedContactIds.add(contact.id);
+                addedCount++;
+
+                // Check total limit
+                if (allContacts.length >= totalMaxContacts) {
+                  console.log(
+                    `Reached total contact limit (${totalMaxContacts}). Stopping.`
+                  );
                   break;
                 }
-
-                // Small delay between batches to prevent API overload
-                await new Promise((resolve) => setTimeout(resolve, 100));
               }
+            }
 
-              return contacts;
-            },
-            60000, // 60 second timeout for list processing
-            `processing list ${listId}`
-          );
-
-          // Add the fetched contacts to our main array
-          allContacts.push(...result);
-
-          console.log(
-            `✅ Completed list ${listId}. Added ${result.length} contacts. Total contacts so far: ${allContacts.length}`
-          );
-
-          // Small delay between list processing to prevent API overload
-          await new Promise((resolve) => setTimeout(resolve, 200));
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : "Unknown error";
-          const timedOut = errorMessage.includes("timed out");
-
-          console.error(
-            `Error fetching contacts for list ${listId}:`,
-            errorMessage
-          );
-
-          if (timedOut) {
-            console.warn(
-              `List ${listId} timed out - this list may be too large. Consider splitting it into smaller lists or increasing limits.`
+            console.log(
+              `✅ List ${listId}: Added ${addedCount} unique contacts. Total: ${allContacts.length}`
             );
           }
 
-          // Continue with other lists instead of failing completely
+          // Break if we've hit the limit
+          if (allContacts.length >= totalMaxContacts) {
+            break;
+          }
+        }
+
+        // Small delay between parallel batches
+        if (
+          i + PARALLEL_BATCH_SIZE < listIds.length &&
+          allContacts.length < totalMaxContacts
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+
+        // Break if we've hit the limit
+        if (allContacts.length >= totalMaxContacts) {
+          break;
         }
       }
+
+      console.log(
+        `🎯 PARALLEL PROCESSING COMPLETE: Fetched ${allContacts.length} total contacts from ${listIds.length} lists`
+      );
     }
 
     // Add individual target contacts with sequential processing
@@ -2908,7 +2938,7 @@ export async function getCampaignTargetCount(
 ): Promise<number> {
   try {
     const countedContactIds = new Set<string>();
-    
+
     // FIXED: Removed artificial 10K limit - now uses much higher defaults
     const maxContactsPerList = options?.maxContactsPerList || 15000; // Changed: Increased from 5K to 15K per list
     const totalMaxContacts = options?.totalMaxContacts || 100000; // Changed: Increased from 25K to 100K total

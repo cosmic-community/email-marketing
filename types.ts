@@ -62,7 +62,7 @@ export interface UploadJob extends CosmicObject {
     errors?: string[]; // Detailed error messages
     duplicates?: string[]; // Duplicate email addresses
     message?: string; // Current processing status message
-    
+
     // NEW FIELDS FOR CHUNKED PROCESSING:
     current_batch_index?: number; // Track which batch we're currently processing
     batch_size?: number; // Size of each processing batch
@@ -204,18 +204,31 @@ export interface MarketingCampaign extends CosmicObject {
     target_tags?: string[];
     status: {
       key: string;
-      value: "Draft" | "Scheduled" | "Sending" | "Sent" | "Cancelled";
+      value:
+        | "Draft"
+        | "Scheduled"
+        | "Sending"
+        | "Sent"
+        | "Paused"
+        | "Cancelled";
     };
     send_date?: string; // Scheduled send time (ISO 8601)
     sent_at?: string; // NEW: Actual sent timestamp (ISO 8601)
     stats?: CampaignStats;
     sending_progress?: CampaignProgress;
     public_sharing_enabled?: boolean; // NEW: controls public link sharing
-    
+
     // NEW: Rate limiting fields
     rate_limit_hit_at?: string; // Timestamp when rate limit was hit
     retry_after?: number; // Seconds to wait before retrying
-    
+
+    // NEW: Distributed locking for serverless environments
+    processing_lock?: {
+      processor_id: string;
+      locked_at: string;
+      expires_at: string;
+    };
+
     // Backward compatibility fields
     subject?: string; // DEPRECATED: use campaign_content.subject
     content?: string; // DEPRECATED: use campaign_content.content
@@ -234,18 +247,31 @@ export interface EmailCampaign extends CosmicObject {
     target_tags?: string[];
     status: {
       key: string;
-      value: "Draft" | "Scheduled" | "Sending" | "Sent" | "Cancelled";
+      value:
+        | "Draft"
+        | "Scheduled"
+        | "Sending"
+        | "Sent"
+        | "Paused"
+        | "Cancelled";
     };
     send_date?: string; // Scheduled send time (ISO 8601)
     sent_at?: string; // NEW: Actual sent timestamp (ISO 8601)
     stats?: CampaignStats;
     sending_progress?: CampaignProgress;
     public_sharing_enabled?: boolean; // NEW: controls public link sharing
-    
+
     // NEW: Rate limiting fields
     rate_limit_hit_at?: string;
     retry_after?: number;
-    
+
+    // NEW: Distributed locking for serverless environments
+    processing_lock?: {
+      processor_id: string;
+      locked_at: string;
+      expires_at: string;
+    };
+
     // Backward compatibility fields
     subject?: string; // DEPRECATED: use campaign_content.subject
     content?: string; // DEPRECATED: use campaign_content.content

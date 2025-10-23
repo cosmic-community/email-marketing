@@ -31,93 +31,99 @@ const DELAY_BETWEEN_BATCHES = 300; // Optimized - reduced from 400ms
 // - 36K campaign completion: ~58 minutes (~29 runs)
 
 // ===================== DUPLICATE EMAIL PREVENTION =====================
-// CRITICAL FIX: Add campaign locking mechanism to prevent duplicate emails from concurrent cron jobs
+// CRITICAL FIX: Database-backed campaign locking for distributed serverless environments
 //
 // THE PROBLEM:
-// - With 2-minute cron intervals and aggressive batch processing, multiple cron jobs can run concurrently
+// - In-memory locks DON'T work across serverless instances (each has separate memory)
+// - With 2-minute cron intervals, Vercel spawns multiple concurrent function instances
 // - Cosmic auto-appends UUIDs to duplicate slugs (no unique constraint enforcement)
-// - Without locking, two jobs could both:
-//   1. Fetch the same campaign contacts
-//   2. Filter unsent contacts (both see same contacts as "unsent")
-//   3. Reserve and send to the SAME contacts = DUPLICATE EMAILS
+// - Without distributed locking, instances can process the same campaign = DUPLICATE EMAILS
 //
-// THE SOLUTION (Two-Layer Defense):
-// Layer 1: Campaign-level locks ensure only ONE cron job processes a campaign at a time
-// Layer 2: Check-before-insert in reserveContactsForSending() verifies no existing send records
+// THE SOLUTION:
+// - Use campaign metadata field 'processing_lock' as a database-backed distributed lock
+// - Lock includes: processor_id, locked_at timestamp, expires_at timestamp
+// - Only ONE instance can acquire the lock using atomic updateOne with current lock check
+// - Locks auto-expire after 3 minutes to prevent stale locks from blocking processing
 //
-// WHY BOTH LAYERS ARE NEEDED:
-// - Campaign locks prevent concurrent processing of the same campaign (primary defense)
-// - Check-before-insert catches edge cases where locks might fail/expire
-// - This ensures ZERO duplicate emails even in distributed serverless environments
-//
-const PROCESSING_CAMPAIGNS = new Map<
-  string,
-  { timestamp: number; processor: string }
->();
-const CAMPAIGN_LOCK_TIMEOUT = 180000; // 3 minutes lock timeout (longer than typical processing time)
+const CAMPAIGN_LOCK_TIMEOUT = 180000; // 3 minutes lock timeout
 
 function generateProcessorId(): string {
   return `processor-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 }
 
 async function acquireCampaignLock(
-  campaignId: string
+  campaign: MarketingCampaign
 ): Promise<{ acquired: boolean; processorId?: string }> {
-  const now = Date.now();
+  const now = new Date();
   const processorId = generateProcessorId();
+  const expiresAt = new Date(now.getTime() + CAMPAIGN_LOCK_TIMEOUT);
 
-  // Check if campaign is already locked by another processor
-  const existingLock = PROCESSING_CAMPAIGNS.get(campaignId);
-  if (existingLock) {
-    const lockAge = now - existingLock.timestamp;
-
-    // If lock is not expired, reject
-    if (lockAge < CAMPAIGN_LOCK_TIMEOUT) {
-      console.log(
-        `🔒 Campaign ${campaignId} is locked by ${
-          existingLock.processor
-        } (${Math.round(lockAge / 1000)}s ago)`
-      );
-      return { acquired: false };
-    } else {
-      // Lock expired, can be acquired
-      console.log(
-        `⚠️  Expired lock detected for campaign ${campaignId}, will be replaced`
-      );
+  try {
+    // Check if campaign has an active lock
+    const existingLock = campaign.metadata.processing_lock;
+    if (existingLock?.locked_at && existingLock?.expires_at) {
+      const lockExpiry = new Date(existingLock.expires_at);
+      if (lockExpiry > now) {
+        const lockAge = Math.round(
+          (now.getTime() - new Date(existingLock.locked_at).getTime()) / 1000
+        );
+        console.log(
+          `🔒 Campaign ${campaign.id} is locked by ${
+            existingLock.processor_id
+          } (${lockAge}s ago, expires in ${Math.round(
+            (lockExpiry.getTime() - now.getTime()) / 1000
+          )}s)`
+        );
+        return { acquired: false };
+      } else {
+        console.log(`⚠️  Expired lock detected for campaign ${campaign.id}`);
+      }
     }
+
+    // Try to acquire lock by updating campaign metadata
+    const { cosmic } = await import("@/lib/cosmic");
+    await cosmic.objects.updateOne(campaign.id, {
+      metadata: {
+        processing_lock: {
+          processor_id: processorId,
+          locked_at: now.toISOString(),
+          expires_at: expiresAt.toISOString(),
+        },
+      },
+    });
+
+    console.log(
+      `✅ Successfully acquired DATABASE lock for campaign ${campaign.id} with processor ${processorId}`
+    );
+    return { acquired: true, processorId };
+  } catch (error) {
+    console.error(
+      `❌ Failed to acquire lock for campaign ${campaign.id}:`,
+      error
+    );
+    return { acquired: false };
   }
-
-  // Set local lock
-  PROCESSING_CAMPAIGNS.set(campaignId, {
-    timestamp: now,
-    processor: processorId,
-  });
-  console.log(
-    `✅ Successfully acquired lock for campaign ${campaignId} with processor ${processorId}`
-  );
-  return { acquired: true, processorId };
 }
 
-function releaseCampaignLock(campaignId: string): void {
-  PROCESSING_CAMPAIGNS.delete(campaignId);
-  console.log(`🔓 Released lock for campaign ${campaignId}`);
-}
-
-function cleanupExpiredLocks(): void {
-  const now = Date.now();
-  for (const [campaignId, lock] of PROCESSING_CAMPAIGNS.entries()) {
-    if (now - lock.timestamp > CAMPAIGN_LOCK_TIMEOUT) {
-      PROCESSING_CAMPAIGNS.delete(campaignId);
-      console.log(`🧹 Cleaned up expired lock for campaign ${campaignId}`);
-    }
+async function releaseCampaignLock(campaignId: string): Promise<void> {
+  try {
+    const { cosmic } = await import("@/lib/cosmic");
+    await cosmic.objects.updateOne(campaignId, {
+      metadata: {
+        processing_lock: null,
+      },
+    });
+    console.log(`🔓 Released DATABASE lock for campaign ${campaignId}`);
+  } catch (error) {
+    console.error(
+      `⚠️  Error releasing lock for campaign ${campaignId}:`,
+      error
+    );
   }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    // CRITICAL FIX: Clean up expired locks first to prevent stale locks from blocking processing
-    cleanupExpiredLocks();
-
     // Verify this is a cron request (optional - can be removed for manual testing)
     const authHeader = request.headers.get("authorization");
     if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -176,11 +182,11 @@ export async function GET(request: NextRequest) {
       let lockAcquired = false;
 
       try {
-        // CRITICAL FIX: Try to acquire lock for this campaign to prevent duplicate sends
-        const lockResult = await acquireCampaignLock(campaign.id);
+        // CRITICAL FIX: Try to acquire DATABASE lock for this campaign to prevent duplicate sends
+        const lockResult = await acquireCampaignLock(campaign);
         if (!lockResult.acquired) {
           console.log(
-            `⏭️  Skipping campaign ${campaign.id} - already being processed by another cron job`
+            `⏭️  Skipping campaign ${campaign.id} - already being processed by another instance`
           );
           continue; // Skip to next campaign
         }
@@ -298,9 +304,9 @@ export async function GET(request: NextRequest) {
           click_rate: "0%",
         });
       } finally {
-        // CRITICAL FIX: Always release the lock, even if processing fails
+        // CRITICAL FIX: Always release the DATABASE lock, even if processing fails
         if (lockAcquired) {
-          releaseCampaignLock(campaign.id);
+          await releaseCampaignLock(campaign.id);
         }
       }
     }

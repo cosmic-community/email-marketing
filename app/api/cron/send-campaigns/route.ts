@@ -30,8 +30,89 @@ const DELAY_BETWEEN_BATCHES = 300; // Optimized - reduced from 400ms
 // - Per day: ~900,000 emails (theoretical max with pagination)
 // - 36K campaign completion: ~58 minutes (~29 runs)
 
+// ===================== DUPLICATE EMAIL PREVENTION =====================
+// CRITICAL FIX: Add campaign locking mechanism to prevent duplicate emails from concurrent cron jobs
+//
+// THE PROBLEM:
+// - With 2-minute cron intervals and aggressive batch processing, multiple cron jobs can run concurrently
+// - Without locking, two jobs could both:
+//   1. Fetch the same campaign contacts
+//   2. Filter unsent contacts (both see same contacts as "unsent")
+//   3. Reserve and send to the SAME contacts = DUPLICATE EMAILS
+//
+// THE SOLUTION:
+// - Campaign-level locks ensure only ONE cron job processes a campaign at a time
+// - Combined with slug-based uniqueness constraints in reserveContactsForSending()
+// - This creates a two-layer defense: process-level locks + database-level constraints
+//
+const PROCESSING_CAMPAIGNS = new Map<
+  string,
+  { timestamp: number; processor: string }
+>();
+const CAMPAIGN_LOCK_TIMEOUT = 180000; // 3 minutes lock timeout (longer than typical processing time)
+
+function generateProcessorId(): string {
+  return `processor-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+}
+
+async function acquireCampaignLock(
+  campaignId: string
+): Promise<{ acquired: boolean; processorId?: string }> {
+  const now = Date.now();
+  const processorId = generateProcessorId();
+
+  // Check if campaign is already locked by another processor
+  const existingLock = PROCESSING_CAMPAIGNS.get(campaignId);
+  if (existingLock) {
+    const lockAge = now - existingLock.timestamp;
+
+    // If lock is not expired, reject
+    if (lockAge < CAMPAIGN_LOCK_TIMEOUT) {
+      console.log(
+        `🔒 Campaign ${campaignId} is locked by ${
+          existingLock.processor
+        } (${Math.round(lockAge / 1000)}s ago)`
+      );
+      return { acquired: false };
+    } else {
+      // Lock expired, can be acquired
+      console.log(
+        `⚠️  Expired lock detected for campaign ${campaignId}, will be replaced`
+      );
+    }
+  }
+
+  // Set local lock
+  PROCESSING_CAMPAIGNS.set(campaignId, {
+    timestamp: now,
+    processor: processorId,
+  });
+  console.log(
+    `✅ Successfully acquired lock for campaign ${campaignId} with processor ${processorId}`
+  );
+  return { acquired: true, processorId };
+}
+
+function releaseCampaignLock(campaignId: string): void {
+  PROCESSING_CAMPAIGNS.delete(campaignId);
+  console.log(`🔓 Released lock for campaign ${campaignId}`);
+}
+
+function cleanupExpiredLocks(): void {
+  const now = Date.now();
+  for (const [campaignId, lock] of PROCESSING_CAMPAIGNS.entries()) {
+    if (now - lock.timestamp > CAMPAIGN_LOCK_TIMEOUT) {
+      PROCESSING_CAMPAIGNS.delete(campaignId);
+      console.log(`🧹 Cleaned up expired lock for campaign ${campaignId}`);
+    }
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
+    // CRITICAL FIX: Clean up expired locks first to prevent stale locks from blocking processing
+    cleanupExpiredLocks();
+
     // Verify this is a cron request (optional - can be removed for manual testing)
     const authHeader = request.headers.get("authorization");
     if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -87,7 +168,19 @@ export async function GET(request: NextRequest) {
 
     // Process each sending campaign
     for (const campaign of sendingCampaigns) {
+      let lockAcquired = false;
+
       try {
+        // CRITICAL FIX: Try to acquire lock for this campaign to prevent duplicate sends
+        const lockResult = await acquireCampaignLock(campaign.id);
+        if (!lockResult.acquired) {
+          console.log(
+            `⏭️  Skipping campaign ${campaign.id} - already being processed by another cron job`
+          );
+          continue; // Skip to next campaign
+        }
+        lockAcquired = true;
+
         // Check if campaign is scheduled for future
         const sendDate = campaign.metadata.send_date;
         if (sendDate) {
@@ -199,6 +292,11 @@ export async function GET(request: NextRequest) {
           open_rate: "0%",
           click_rate: "0%",
         });
+      } finally {
+        // CRITICAL FIX: Always release the lock, even if processing fails
+        if (lockAcquired) {
+          releaseCampaignLock(campaign.id);
+        }
       }
     }
 

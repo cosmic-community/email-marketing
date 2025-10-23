@@ -125,6 +125,7 @@ export async function reserveContactsForSending(
   const RESERVATION_DELAY = 150; // Increased from 50ms to 150ms (3x slower = gentler on DB)
   let processedCount = 0;
 
+  // CRITICAL FIX: Process reservations sequentially with proper error handling
   for (const contact of contactsToReserve) {
     try {
       // Create deterministic slug for uniqueness constraint
@@ -157,6 +158,9 @@ export async function reserveContactsForSending(
         errorMessage.includes("duplicate")
       ) {
         // Already reserved by another process - skip silently
+        console.log(
+          `⏭️  Contact ${contact.id} already reserved by another process`
+        );
         continue;
       }
 

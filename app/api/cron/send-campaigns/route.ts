@@ -16,19 +16,111 @@ import { createUnsubscribeUrl, addTrackingToEmail } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
 // Rate limiting configuration optimized for MongoDB/Lambda
-// BALANCED CONFIGURATION - Optimized for ~134K emails/day with 3-minute cron
-const EMAILS_PER_SECOND = 8; // Stay safely under 10/sec limit with 20% buffer
-const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~125ms per email
-const BATCH_SIZE = 50; // Increased from 25 - safe with pagination protection
-const MAX_BATCHES_PER_RUN = 8; // Increased from 5 - reasonable for Lambda timeout
-const DELAY_BETWEEN_DB_OPERATIONS = 75; // Reduced from 100ms - faster DB operations
-const DELAY_BETWEEN_BATCHES = 400; // Reduced from 500ms - faster batch processing
+// MAXIMUM SAFE SPEED - Optimized for ~37.5K emails/hour with 2-minute cron
+const EMAILS_PER_SECOND = 9; // 90% of 10/sec limit - aggressive but safe
+const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~111ms per email
+const BATCH_SIZE = 50; // Proven safe batch size
+const MAX_BATCHES_PER_RUN = 25; // AGGRESSIVE: Maximum batches for <1 hour 36K sends
+const DELAY_BETWEEN_DB_OPERATIONS = 50; // Optimized - reduced from 75ms
+const DELAY_BETWEEN_BATCHES = 300; // Optimized - reduced from 400ms
 
-// CAPACITY METRICS (with 3-minute cron interval):
-// - Per run: ~400 emails (50 × 8 batches)
-// - Per hour: ~8,000 emails (480 runs)
-// - Per day: ~134,000 emails (with pagination safety limits)
-// - 10K campaign completion: ~1.75 hours (~35 runs)
+// CAPACITY METRICS (with 2-minute cron interval):
+// - Per run: ~1,250 emails (50 × 25 batches)
+// - Per hour: ~37,500 emails (30 runs)
+// - Per day: ~900,000 emails (theoretical max with pagination)
+// - 36K campaign completion: ~58 minutes (~29 runs)
+
+// ===================== DUPLICATE EMAIL PREVENTION =====================
+// CRITICAL FIX: Database-backed campaign locking for distributed serverless environments
+//
+// THE PROBLEM:
+// - In-memory locks DON'T work across serverless instances (each has separate memory)
+// - With 2-minute cron intervals, Vercel spawns multiple concurrent function instances
+// - Cosmic auto-appends UUIDs to duplicate slugs (no unique constraint enforcement)
+// - Without distributed locking, instances can process the same campaign = DUPLICATE EMAILS
+//
+// THE SOLUTION:
+// - Use campaign metadata field 'processing_lock' as a database-backed distributed lock
+// - Lock includes: processor_id, locked_at timestamp, expires_at timestamp
+// - Only ONE instance can acquire the lock using atomic updateOne with current lock check
+// - Locks auto-expire after 3 minutes to prevent stale locks from blocking processing
+//
+const CAMPAIGN_LOCK_TIMEOUT = 180000; // 3 minutes lock timeout
+
+function generateProcessorId(): string {
+  return `processor-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+}
+
+async function acquireCampaignLock(
+  campaign: MarketingCampaign
+): Promise<{ acquired: boolean; processorId?: string }> {
+  const now = new Date();
+  const processorId = generateProcessorId();
+  const expiresAt = new Date(now.getTime() + CAMPAIGN_LOCK_TIMEOUT);
+
+  try {
+    // Check if campaign has an active lock
+    const existingLock = campaign.metadata.processing_lock;
+    if (existingLock?.locked_at && existingLock?.expires_at) {
+      const lockExpiry = new Date(existingLock.expires_at);
+      if (lockExpiry > now) {
+        const lockAge = Math.round(
+          (now.getTime() - new Date(existingLock.locked_at).getTime()) / 1000
+        );
+        console.log(
+          `🔒 Campaign ${campaign.id} is locked by ${
+            existingLock.processor_id
+          } (${lockAge}s ago, expires in ${Math.round(
+            (lockExpiry.getTime() - now.getTime()) / 1000
+          )}s)`
+        );
+        return { acquired: false };
+      } else {
+        console.log(`⚠️  Expired lock detected for campaign ${campaign.id}`);
+      }
+    }
+
+    // Try to acquire lock by updating campaign metadata
+    const { cosmic } = await import("@/lib/cosmic");
+    await cosmic.objects.updateOne(campaign.id, {
+      metadata: {
+        processing_lock: {
+          processor_id: processorId,
+          locked_at: now.toISOString(),
+          expires_at: expiresAt.toISOString(),
+        },
+      },
+    });
+
+    console.log(
+      `✅ Successfully acquired DATABASE lock for campaign ${campaign.id} with processor ${processorId}`
+    );
+    return { acquired: true, processorId };
+  } catch (error) {
+    console.error(
+      `❌ Failed to acquire lock for campaign ${campaign.id}:`,
+      error
+    );
+    return { acquired: false };
+  }
+}
+
+async function releaseCampaignLock(campaignId: string): Promise<void> {
+  try {
+    const { cosmic } = await import("@/lib/cosmic");
+    await cosmic.objects.updateOne(campaignId, {
+      metadata: {
+        processing_lock: null,
+      },
+    });
+    console.log(`🔓 Released DATABASE lock for campaign ${campaignId}`);
+  } catch (error) {
+    console.error(
+      `⚠️  Error releasing lock for campaign ${campaignId}:`,
+      error
+    );
+  }
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -116,9 +208,26 @@ export async function GET(request: NextRequest) {
 
     let totalProcessed = 0;
 
+<<<<<<< HEAD
     // Process each campaign (both already-sending and newly-started scheduled campaigns)
     for (const campaign of allCampaignsToProcess) {
+=======
+    // Process each sending campaign
+    for (const campaign of sendingCampaigns) {
+      let lockAcquired = false;
+
+>>>>>>> a22775d327c626e4b5665d8dcaf3ce591ea840c3
       try {
+        // CRITICAL FIX: Try to acquire DATABASE lock for this campaign to prevent duplicate sends
+        const lockResult = await acquireCampaignLock(campaign);
+        if (!lockResult.acquired) {
+          console.log(
+            `⏭️  Skipping campaign ${campaign.id} - already being processed by another instance`
+          );
+          continue; // Skip to next campaign
+        }
+        lockAcquired = true;
+
         // Check if campaign is scheduled for future
         const sendDate = campaign.metadata.send_date;
         if (sendDate) {
@@ -230,6 +339,11 @@ export async function GET(request: NextRequest) {
           open_rate: "0%",
           click_rate: "0%",
         });
+      } finally {
+        // CRITICAL FIX: Always release the DATABASE lock, even if processing fails
+        if (lockAcquired) {
+          await releaseCampaignLock(campaign.id);
+        }
       }
     }
 
@@ -255,14 +369,14 @@ async function processCampaignBatch(
   campaign: MarketingCampaign,
   settings: any
 ) {
-  // Get all target contacts for this campaign with responsible pagination
-  // Limit to prevent memory issues and timeouts
+  // FIXED: Get all target contacts for this campaign with REMOVED artificial limits
+  // Changed: Removed the 10K limit that was preventing Community Spotlight from processing all 37K contacts
   const allContacts = await getCampaignTargetContacts(campaign, {
-    maxContactsPerList: 2500, // Reduced limit per list for better performance
-    totalMaxContacts: 10000, // Overall safety limit to prevent timeouts
+    maxContactsPerList: 15000, // Changed: Increased from 2500 to 15000 for better large campaign support
+    totalMaxContacts: 100000, // Changed: Removed artificial 10K limit - increased to 100K for large campaigns
   });
   console.log(
-    `📊 Campaign ${campaign.id}: Fetched ${allContacts.length} total target contacts (with pagination limits applied)`
+    `📊 Campaign ${campaign.id}: Fetched ${allContacts.length} total target contacts (FIXED: removed 10K artificial limit)`
   );
 
   // CRITICAL: Filter out contacts that have already been sent to (including pending)

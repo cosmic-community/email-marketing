@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/send-campaigns",
-      "schedule": "*/3 * * * *"
+      "schedule": "*/2 * * * *"
     },
     {
       "path": "/api/cron/sync-campaign-stats",

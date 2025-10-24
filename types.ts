@@ -204,7 +204,13 @@ export interface MarketingCampaign extends CosmicObject {
     target_tags?: string[];
     status: {
       key: string;
-      value: "Draft" | "Scheduled" | "Sending" | "Sent" | "Cancelled";
+      value:
+        | "Draft"
+        | "Scheduled"
+        | "Sending"
+        | "Sent"
+        | "Paused"
+        | "Cancelled";
     };
     send_date?: string; // Scheduled send time (ISO 8601)
     sent_at?: string; // NEW: Actual sent timestamp (ISO 8601)
@@ -215,6 +221,13 @@ export interface MarketingCampaign extends CosmicObject {
     // NEW: Rate limiting fields
     rate_limit_hit_at?: string; // Timestamp when rate limit was hit
     retry_after?: number; // Seconds to wait before retrying
+
+    // NEW: Distributed locking for serverless environments
+    processing_lock?: {
+      processor_id: string;
+      locked_at: string;
+      expires_at: string;
+    };
 
     // Backward compatibility fields
     subject?: string; // DEPRECATED: use campaign_content.subject
@@ -234,7 +247,13 @@ export interface EmailCampaign extends CosmicObject {
     target_tags?: string[];
     status: {
       key: string;
-      value: "Draft" | "Scheduled" | "Sending" | "Sent" | "Cancelled";
+      value:
+        | "Draft"
+        | "Scheduled"
+        | "Sending"
+        | "Sent"
+        | "Paused"
+        | "Cancelled";
     };
     send_date?: string; // Scheduled send time (ISO 8601)
     sent_at?: string; // NEW: Actual sent timestamp (ISO 8601)
@@ -245,6 +264,13 @@ export interface EmailCampaign extends CosmicObject {
     // NEW: Rate limiting fields
     rate_limit_hit_at?: string;
     retry_after?: number;
+
+    // NEW: Distributed locking for serverless environments
+    processing_lock?: {
+      processor_id: string;
+      locked_at: string;
+      expires_at: string;
+    };
 
     // Backward compatibility fields
     subject?: string; // DEPRECATED: use campaign_content.subject

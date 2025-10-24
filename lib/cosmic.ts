@@ -1820,6 +1820,221 @@ export async function getUnsubscribedContactsByCampaign(
   }
 }
 
+// Get aggregated click statistics for a campaign
+export async function getClickStatsByCampaign(campaignId: string): Promise<{
+  uniqueClickers: number;
+  totalClicks: number;
+  linkStats: Array<{
+    url: string;
+    clickCount: number;
+    uniqueClickers: number;
+  }>;
+}> {
+  try {
+    console.log(
+      `📊 Getting aggregated click stats for campaign ${campaignId}...`
+    );
+
+    // Fetch all click events
+    const allEvents: any[] = [];
+    let skip = 0;
+    const limit = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      try {
+        const result = await cosmic.objects
+          .find({
+            type: "email-tracking-events",
+            "metadata.campaign": campaignId,
+            "metadata.event_type": "Click",
+          })
+          .props(["id", "metadata.contact", "metadata.url"])
+          .limit(limit)
+          .skip(skip)
+          .depth(0); // Changed to depth 0 to avoid loading full contact objects
+
+        allEvents.push(...result.objects);
+
+        skip += limit;
+        hasMore = result.objects.length === limit && skip < (result.total || 0);
+      } catch (batchError) {
+        if (hasStatus(batchError) && batchError.status === 404) {
+          break;
+        }
+        throw batchError;
+      }
+    }
+
+    // Process events to get aggregated stats
+    const uniqueContactIds = new Set<string>();
+    const linkMap = new Map<string, { contacts: Set<string>; total: number }>();
+
+    for (const event of allEvents) {
+      // Extract contact ID
+      let contactId: string | undefined;
+      if (
+        typeof event.metadata?.contact === "object" &&
+        event.metadata.contact?.id
+      ) {
+        contactId = event.metadata.contact.id;
+      } else if (typeof event.metadata?.contact === "string") {
+        contactId = event.metadata.contact;
+      }
+
+      const url = event.metadata?.url || "";
+
+      if (contactId) {
+        uniqueContactIds.add(contactId);
+      }
+
+      // Aggregate by URL
+      if (url) {
+        if (!linkMap.has(url)) {
+          linkMap.set(url, { contacts: new Set(), total: 0 });
+        }
+        const linkData = linkMap.get(url)!;
+        linkData.total++;
+        if (contactId) {
+          linkData.contacts.add(contactId);
+        }
+      }
+    }
+
+    // Convert linkMap to array and sort by click count
+    const linkStats = Array.from(linkMap.entries())
+      .map(([url, data]) => ({
+        url,
+        clickCount: data.total,
+        uniqueClickers: data.contacts.size,
+      }))
+      .sort((a, b) => b.clickCount - a.clickCount);
+
+    const stats = {
+      uniqueClickers: uniqueContactIds.size,
+      totalClicks: allEvents.length,
+      linkStats,
+    };
+
+    console.log(`✅ Aggregated click stats:`, {
+      uniqueClickers: stats.uniqueClickers,
+      totalClicks: stats.totalClicks,
+      uniqueLinks: linkStats.length,
+    });
+
+    return stats;
+  } catch (error: any) {
+    console.error(
+      `❌ ERROR getting aggregated click stats for campaign ${campaignId}:`,
+      {
+        message: error?.message,
+        status: error?.status,
+        name: error?.name,
+        stack: error?.stack,
+      }
+    );
+    return {
+      uniqueClickers: 0,
+      totalClicks: 0,
+      linkStats: [],
+    };
+  }
+}
+
+// Get detailed click events for a campaign
+export async function getClickEventsByCampaign(
+  campaignId: string,
+  options?: {
+    limit?: number;
+    skip?: number;
+  }
+): Promise<{
+  events: Array<{
+    id: string;
+    contact_id?: string;
+    contact_email?: string;
+    contact_name?: string;
+    url: string;
+    timestamp: string;
+    user_agent?: string;
+    ip_address?: string;
+  }>;
+  total: number;
+  limit: number;
+  skip: number;
+}> {
+  try {
+    const limit = options?.limit || 50;
+    const skip = options?.skip || 0;
+
+    // Build query to find click events for this campaign
+    const query = {
+      type: "email-tracking-events",
+      "metadata.campaign": campaignId,
+      "metadata.event_type": "Click",
+    };
+
+    const result = await cosmic.objects
+      .find(query)
+      .props(["id", "metadata", "created_at"])
+      .limit(limit)
+      .skip(skip)
+      .depth(1)
+      .sort("-created_at"); // Most recent first
+
+    const events = result.objects.map((obj: any) => {
+      // Extract contact info from nested contact object or fallback fields
+      let contactEmail = obj.metadata?.email || obj.metadata?.contact_email;
+      let contactName = "";
+      let contactId = obj.metadata?.contact;
+
+      // If contact is an object (with depth=1), extract details
+      if (
+        typeof obj.metadata?.contact === "object" &&
+        obj.metadata.contact?.metadata
+      ) {
+        const contact = obj.metadata.contact;
+        contactId = contact.id;
+        contactEmail = contact.metadata?.email || contactEmail;
+        const firstName = contact.metadata?.first_name || "";
+        const lastName = contact.metadata?.last_name || "";
+        contactName = `${firstName} ${lastName}`.trim();
+      }
+
+      return {
+        id: obj.id,
+        contact_id: typeof contactId === "string" ? contactId : undefined,
+        contact_email: contactEmail,
+        contact_name: contactName || undefined,
+        url: obj.metadata?.url || "",
+        timestamp: obj.metadata?.timestamp || obj.created_at,
+        user_agent: obj.metadata?.user_agent,
+        ip_address: obj.metadata?.ip_address,
+      };
+    });
+
+    const total = result.total || 0;
+
+    return {
+      events,
+      total,
+      limit,
+      skip,
+    };
+  } catch (error) {
+    if (hasStatus(error) && error.status === 404) {
+      return {
+        events: [],
+        total: 0,
+        limit: options?.limit || 50,
+        skip: options?.skip || 0,
+      };
+    }
+    console.error("Error fetching click events:", error);
+    throw new Error("Failed to fetch click events");
+  }
+}
+
 export async function getEmailContact(
   id: string
 ): Promise<EmailContact | null> {
@@ -2892,8 +3107,9 @@ export async function getCampaignTargetContacts(
       for (const contactRef of campaign.metadata.target_contacts) {
         try {
           // Extract contact ID - handle both string IDs and contact objects
-          const contactId = typeof contactRef === "string" ? contactRef : contactRef;
-          
+          const contactId =
+            typeof contactRef === "string" ? contactRef : contactRef;
+
           // CRITICAL FIX: Ensure contactId is a string before passing to getEmailContact
           if (typeof contactId === "string") {
             const contact = await getEmailContact(contactId);
@@ -3057,8 +3273,9 @@ export async function getCampaignTargetCount(
       for (const contactRef of campaign.metadata.target_contacts) {
         try {
           // Extract contact ID - handle both string IDs and contact objects
-          const contactId = typeof contactRef === "string" ? contactRef : contactRef;
-          
+          const contactId =
+            typeof contactRef === "string" ? contactRef : contactRef;
+
           // CRITICAL FIX: Ensure contactId is a string before using in query
           if (typeof contactId === "string") {
             // Verify contact exists and is active (minimal query)

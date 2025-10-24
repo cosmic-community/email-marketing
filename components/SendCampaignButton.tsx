@@ -25,6 +25,9 @@ export default function SendCampaignButton({
 
   const status = currentCampaign.metadata.status?.value || "Draft";
 
+  // Format numbers with commas
+  const formatNumber = (num: number) => num.toLocaleString("en-US");
+
   // Sync local state when prop changes
   useEffect(() => {
     setCurrentCampaign(campaign);
@@ -257,11 +260,15 @@ export default function SendCampaignButton({
         {currentCampaign.metadata.stats && (
           <div className="text-sm text-gray-600 text-center">
             <div>
-              Sent to {currentCampaign.metadata.stats.sent || 0} recipients
+              Sent to {formatNumber(currentCampaign.metadata.stats.sent || 0)}{" "}
+              recipients
             </div>
             {currentCampaign.metadata.stats.delivered !== undefined &&
               Number(currentCampaign.metadata.stats.delivered) > 0 && (
-                <div>Delivered: {currentCampaign.metadata.stats.delivered}</div>
+                <div>
+                  Delivered:{" "}
+                  {formatNumber(currentCampaign.metadata.stats.delivered)}
+                </div>
               )}
           </div>
         )}
@@ -290,8 +297,9 @@ export default function SendCampaignButton({
               ></div>
             </div>
             <div>
-              Progress: {currentCampaign.metadata.sending_progress.sent} /{" "}
-              {currentCampaign.metadata.sending_progress.total} (
+              Progress:{" "}
+              {formatNumber(currentCampaign.metadata.sending_progress.sent)} /{" "}
+              {formatNumber(currentCampaign.metadata.sending_progress.total)} (
               {currentCampaign.metadata.sending_progress.progress_percentage}%)
             </div>
           </div>

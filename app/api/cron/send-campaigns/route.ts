@@ -208,15 +208,10 @@ export async function GET(request: NextRequest) {
 
     let totalProcessed = 0;
 
-<<<<<<< HEAD
     // Process each campaign (both already-sending and newly-started scheduled campaigns)
     for (const campaign of allCampaignsToProcess) {
-=======
-    // Process each sending campaign
-    for (const campaign of sendingCampaigns) {
       let lockAcquired = false;
 
->>>>>>> a22775d327c626e4b5665d8dcaf3ce591ea840c3
       try {
         // CRITICAL FIX: Try to acquire DATABASE lock for this campaign to prevent duplicate sends
         const lockResult = await acquireCampaignLock(campaign);

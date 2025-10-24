@@ -11,6 +11,8 @@ import {
   getEmailTemplates,
   getEmailLists,
   getUnsubscribedContactsByCampaign,
+  getClickEventsByCampaign,
+  getClickStatsByCampaign,
 } from "@/lib/cosmic";
 import CampaignPageClient from "@/components/CampaignPageClient";
 import { EmailContact } from "@/types";
@@ -39,17 +41,42 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
       notFound();
     }
 
-    // Only fetch unsubscribed contacts if the campaign has been sent
+    // Fetch unsubscribed contacts and click events if the campaign is sending or sent
     let unsubscribedContacts: EmailContact[] = [];
-    if (campaign.metadata.status?.value === "Sent") {
+    let unsubscribesTotal = 0;
+    let clickEvents: any[] = [];
+    let clicksTotal = 0;
+    let clickStats: any = null;
+    const status = campaign.metadata.status?.value;
+
+    if (status === "Sending" || status === "Sent") {
       try {
         const result = await getUnsubscribedContactsByCampaign(id, {
-          limit: 50,
+          limit: 10,
         });
         unsubscribedContacts = result.contacts;
+        unsubscribesTotal = result.total;
       } catch (error) {
         console.error("Error fetching unsubscribed contacts:", error);
         // Continue without unsubscribed contacts data
+      }
+
+      try {
+        const result = await getClickEventsByCampaign(id, {
+          limit: 10,
+        });
+        clickEvents = result.events;
+        clicksTotal = result.total;
+      } catch (error) {
+        console.error("Error fetching click events:", error);
+        // Continue without click events data
+      }
+
+      try {
+        clickStats = await getClickStatsByCampaign(id);
+      } catch (error) {
+        console.error("Error fetching aggregated click stats:", error);
+        // Continue without aggregated stats
       }
     }
 
@@ -119,6 +146,10 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
             lists={lists}
             stats={stats}
             unsubscribedContacts={unsubscribedContacts}
+            unsubscribesTotal={unsubscribesTotal}
+            clickEvents={clickEvents}
+            clicksTotal={clicksTotal}
+            clickStats={clickStats}
           />
         </main>
       </div>

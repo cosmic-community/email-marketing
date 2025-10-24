@@ -120,6 +120,41 @@ export default function CampaignsList({ campaigns }: CampaignsListProps) {
     }
   }
 
+  // Changed: New function to format time
+  const formatTime = (dateString: string) => {
+    if (!dateString) return ''
+    try {
+      return new Date(dateString).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
+    } catch {
+      return ''
+    }
+  }
+
+  // Changed: New function to format both date and time
+  const formatDateTime = (dateString: string) => {
+    if (!dateString) return 'Not scheduled'
+    try {
+      const date = new Date(dateString)
+      const dateStr = date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      })
+      const timeStr = date.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
+      return `${dateStr} at ${timeStr}`
+    } catch {
+      return 'Invalid date'
+    }
+  }
+
   const getSentDate = (campaign: MarketingCampaign) => {
     // For sent campaigns, we can use the modified_at date as an approximation
     // or look for a specific sent_at field if it exists in the campaign stats
@@ -188,7 +223,8 @@ export default function CampaignsList({ campaigns }: CampaignsListProps) {
                         ) : (
                           <div className="flex items-center space-x-1">
                             <Calendar className="h-4 w-4" />
-                            <span>{formatDate(campaign.metadata.send_date || '')}</span>
+                            {/* Changed: Show both date and time for scheduled campaigns */}
+                            <span>{formatDateTime(campaign.metadata.send_date || '')}</span>
                           </div>
                         )}
                       </div>

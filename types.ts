@@ -200,7 +200,7 @@ export interface MarketingCampaign extends CosmicObject {
     campaign_content?: CampaignContent; // NEW: stores decoupled content
     template?: string | EmailTemplate; // DEPRECATED: for backward compatibility
     target_lists?: EmailList[] | string[]; // NEW: target lists for sending
-    target_contacts?: string[]; // Store contact IDs as the primary field
+    target_contacts?: EmailContact[] | string[]; // Can be populated objects (depth=1) or IDs
     target_tags?: string[];
     status: {
       key: string;
@@ -243,7 +243,7 @@ export interface EmailCampaign extends CosmicObject {
     campaign_content?: CampaignContent; // NEW: stores decoupled content
     template?: string | EmailTemplate; // DEPRECATED: for backward compatibility
     target_lists?: EmailList[] | string[];
-    target_contacts?: string[];
+    target_contacts?: EmailContact[] | string[]; // Can be populated objects (depth=1) or IDs
     target_tags?: string[];
     status: {
       key: string;

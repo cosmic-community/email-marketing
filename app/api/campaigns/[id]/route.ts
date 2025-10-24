@@ -104,7 +104,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       updateData.target_tags = data.target_tags;
     if (data.send_date !== undefined) updateData.send_date = data.send_date;
     if (data.stats !== undefined) updateData.stats = data.stats;
-    if (data.public_sharing_enabled !== undefined) updateData.public_sharing_enabled = data.public_sharing_enabled;
+    if (data.public_sharing_enabled !== undefined)
+      updateData.public_sharing_enabled = data.public_sharing_enabled;
 
     // Handle status update with special logic
     if (data.status !== undefined) {
@@ -137,11 +138,17 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         );
       }
 
-      // Update with status - use special status update function for proper formatting
-      const campaign = await updateEmailCampaign(id, updateData);
-      if (campaign) {
-        // Then update the status using the specialized function
+      // If only status is being updated (no other fields), use the specialized status update function
+      if (Object.keys(updateData).length === 0) {
+        // Status-only update - use the specialized function
         await updateCampaignStatus(id, data.status, data.stats);
+      } else {
+        // Update other fields first, then update status
+        const campaign = await updateEmailCampaign(id, updateData);
+        if (campaign) {
+          // Then update the status using the specialized function
+          await updateCampaignStatus(id, data.status, data.stats);
+        }
       }
     } else {
       // Regular update without status change

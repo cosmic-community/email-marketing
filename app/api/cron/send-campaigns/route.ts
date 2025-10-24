@@ -516,34 +516,50 @@ export async function GET(request: NextRequest) {
             // Don't fail the entire job if stats sync fails
           }
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error(`❌ [ERROR] Processing campaign ${campaign.id}:`, error);
 
-        // Update campaign with error status
-        try {
-          await withDatabaseTimeout(
-            () =>
-              updateCampaignStatus(campaign.id, "Cancelled", {
-                sent: 0,
-                delivered: 0,
-                opened: 0,
-                clicked: 0,
-                bounced: 0,
-                unsubscribed: 0,
-                open_rate: "0%",
-                click_rate: "0%",
-              }),
-            DB_OPERATION_TIMEOUT,
-            `cancel campaign ${campaign.id}`
-          );
+        // Check if this is a timeout error - if so, don't cancel, just continue in next run
+        const isTimeoutError =
+          error.message?.includes("timed out") ||
+          error.message?.includes("timeout") ||
+          error.name === "TimeoutError";
+
+        if (isTimeoutError) {
           console.log(
-            `⚠️  [CANCELLED] Campaign ${campaign.id} marked as cancelled due to error`
+            `⏱️  [TIMEOUT] Campaign ${campaign.id} timed out but will continue in next cron run`
           );
-        } catch (cancelError) {
+          // Don't cancel on timeout - the campaign will resume in the next cron run
+        } else {
+          // Only cancel on actual errors (not timeouts)
           console.error(
-            `❌ [ERROR] Failed to cancel campaign ${campaign.id}:`,
-            cancelError
+            `⚠️  [CRITICAL ERROR] Campaign ${campaign.id} encountered a non-timeout error, marking as cancelled`
           );
+          try {
+            await withDatabaseTimeout(
+              () =>
+                updateCampaignStatus(campaign.id, "Cancelled", {
+                  sent: 0,
+                  delivered: 0,
+                  opened: 0,
+                  clicked: 0,
+                  bounced: 0,
+                  unsubscribed: 0,
+                  open_rate: "0%",
+                  click_rate: "0%",
+                }),
+              DB_OPERATION_TIMEOUT,
+              `cancel campaign ${campaign.id}`
+            );
+            console.log(
+              `⚠️  [CANCELLED] Campaign ${campaign.id} marked as cancelled due to error`
+            );
+          } catch (cancelError) {
+            console.error(
+              `❌ [ERROR] Failed to cancel campaign ${campaign.id}:`,
+              cancelError
+            );
+          }
         }
       } finally {
         // CRITICAL FIX: Always release the DATABASE lock, even if processing fails

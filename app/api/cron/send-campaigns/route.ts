@@ -155,9 +155,40 @@ export async function GET(request: NextRequest) {
       (campaign) => campaign.metadata.status?.value === "Sending"
     );
 
-    console.log(`Found ${sendingCampaigns.length} campaigns to process`);
+    // ALSO get "Scheduled" campaigns whose time has arrived and auto-start them
+    const scheduledCampaigns = result.campaigns.filter((campaign) => {
+      if (campaign.metadata.status?.value !== "Scheduled") return false;
+      if (!campaign.metadata.send_date) return false;
 
-    if (sendingCampaigns.length === 0) {
+      const scheduledTime = new Date(campaign.metadata.send_date);
+      return scheduledTime <= now;
+    });
+
+    console.log(
+      `Found ${sendingCampaigns.length} sending campaigns and ${scheduledCampaigns.length} scheduled campaigns ready to start`
+    );
+
+    // Transition scheduled campaigns to "Sending" status
+    for (const campaign of scheduledCampaigns) {
+      console.log(
+        `🚀 Auto-starting scheduled campaign: ${campaign.metadata.name} (scheduled for ${campaign.metadata.send_date})`
+      );
+      await updateCampaignStatus(campaign.id, "Sending", {
+        sent: 0,
+        delivered: 0,
+        opened: 0,
+        clicked: 0,
+        bounced: 0,
+        unsubscribed: 0,
+        open_rate: "0%",
+        click_rate: "0%",
+      });
+    }
+
+    // Combine both lists for processing
+    const allCampaignsToProcess = [...sendingCampaigns, ...scheduledCampaigns];
+
+    if (allCampaignsToProcess.length === 0) {
       return NextResponse.json({
         success: true,
         message: "No campaigns to process",
@@ -177,10 +208,15 @@ export async function GET(request: NextRequest) {
 
     let totalProcessed = 0;
 
+<<<<<<< HEAD
+    // Process each campaign (both already-sending and newly-started scheduled campaigns)
+    for (const campaign of allCampaignsToProcess) {
+=======
     // Process each sending campaign
     for (const campaign of sendingCampaigns) {
       let lockAcquired = false;
 
+>>>>>>> a22775d327c626e4b5665d8dcaf3ce591ea840c3
       try {
         // CRITICAL FIX: Try to acquire DATABASE lock for this campaign to prevent duplicate sends
         const lockResult = await acquireCampaignLock(campaign);
@@ -312,7 +348,7 @@ export async function GET(request: NextRequest) {
     }
 
     console.log(
-      `✅ Cron job completed. Processed ${totalProcessed} emails across ${sendingCampaigns.length} campaigns`
+      `✅ Cron job completed. Processed ${totalProcessed} emails across ${allCampaignsToProcess.length} campaigns`
     );
     console.log(
       `⚡ Balanced config performance: ${BATCH_SIZE} emails/batch, ${DELAY_BETWEEN_DB_OPERATIONS}ms DB throttling, ${DELAY_BETWEEN_BATCHES}ms batch delay`
@@ -320,7 +356,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Processed ${totalProcessed} emails across ${sendingCampaigns.length} campaigns`,
+      message: `Processed ${totalProcessed} emails across ${allCampaignsToProcess.length} campaigns`,
       processed: totalProcessed,
     });
   } catch (error) {

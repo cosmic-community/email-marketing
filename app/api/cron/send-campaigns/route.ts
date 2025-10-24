@@ -16,24 +16,24 @@ import { createUnsubscribeUrl, addTrackingToEmail } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
 // Rate limiting configuration optimized for MongoDB/Lambda
-// MAXIMUM SAFE SPEED - Optimized for ~37.5K emails/hour with 2-minute cron
+// MAXIMUM SAFE SPEED - Optimized for ~60K emails/hour with 2-minute cron
 const EMAILS_PER_SECOND = 9; // 90% of 10/sec limit - aggressive but safe
 const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~111ms per email
 const BATCH_SIZE = 50; // Proven safe batch size
-const MAX_BATCHES_PER_RUN = 25; // AGGRESSIVE: Maximum batches for <1 hour 36K sends
+const MAX_BATCHES_PER_RUN = 40; // INCREASED: Maximum batches for large campaigns (36K+)
 const DELAY_BETWEEN_DB_OPERATIONS = 50; // Optimized - reduced from 75ms
 const DELAY_BETWEEN_BATCHES = 300; // Optimized - reduced from 400ms
 
-// 🚨 NEW: Timeout configuration to prevent 504 errors
-const MAX_EXECUTION_TIME = 45000; // 45 seconds (safe margin before 60s timeout)
-const CAMPAIGN_PROCESSING_TIMEOUT = 35000; // 35 seconds max per campaign
+// 🚨 Timeout configuration to prevent 504 errors - INCREASED for large campaigns
+const MAX_EXECUTION_TIME = 55000; // 55 seconds (safe margin before 60s timeout)
+const CAMPAIGN_PROCESSING_TIMEOUT = 50000; // 50 seconds max per campaign
 const DB_OPERATION_TIMEOUT = 10000; // 10 seconds max per DB operation
 
 // CAPACITY METRICS (with 2-minute cron interval):
-// - Per run: ~1,250 emails (50 × 25 batches)
-// - Per hour: ~37,500 emails (30 runs)
-// - Per day: ~900,000 emails (theoretical max with pagination)
-// - 36K campaign completion: ~58 minutes (~29 runs)
+// - Per run: ~2,000 emails (50 × 40 batches)
+// - Per hour: ~60,000 emails (30 runs)
+// - Per day: ~1,440,000 emails (theoretical max with pagination)
+// - 36K campaign completion: ~36 minutes (~18 runs)
 
 // ===================== DUPLICATE EMAIL PREVENTION =====================
 // CRITICAL FIX: Database-backed campaign locking for distributed serverless environments
@@ -96,7 +96,7 @@ async function withDatabaseTimeout<T>(
       setTimeout(() => {
         reject(new Error(`${operationName} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-    })
+    }),
   ]);
 }
 
@@ -112,8 +112,10 @@ async function acquireCampaignLock(
   const expiresAt = new Date(now.getTime() + CAMPAIGN_LOCK_TIMEOUT);
 
   try {
-    console.log(`🔒 [${processorId}] Attempting to acquire lock for campaign ${campaign.id}`);
-    
+    console.log(
+      `🔒 [${processorId}] Attempting to acquire lock for campaign ${campaign.id}`
+    );
+
     // Check if campaign has an active lock
     const existingLock = campaign.metadata.processing_lock;
     if (existingLock?.locked_at && existingLock?.expires_at) {
@@ -138,15 +140,16 @@ async function acquireCampaignLock(
     // Try to acquire lock by updating campaign metadata
     const { cosmic } = await import("@/lib/cosmic");
     await withDatabaseTimeout(
-      () => cosmic.objects.updateOne(campaign.id, {
-        metadata: {
-          processing_lock: {
-            processor_id: processorId,
-            locked_at: now.toISOString(),
-            expires_at: expiresAt.toISOString(),
+      () =>
+        cosmic.objects.updateOne(campaign.id, {
+          metadata: {
+            processing_lock: {
+              processor_id: processorId,
+              locked_at: now.toISOString(),
+              expires_at: expiresAt.toISOString(),
+            },
           },
-        },
-      }),
+        }),
       DB_OPERATION_TIMEOUT,
       `acquire lock for campaign ${campaign.id}`
     );
@@ -168,11 +171,12 @@ async function releaseCampaignLock(campaignId: string): Promise<void> {
   try {
     const { cosmic } = await import("@/lib/cosmic");
     await withDatabaseTimeout(
-      () => cosmic.objects.updateOne(campaignId, {
-        metadata: {
-          processing_lock: null,
-        },
-      }),
+      () =>
+        cosmic.objects.updateOne(campaignId, {
+          metadata: {
+            processing_lock: null,
+          },
+        }),
       DB_OPERATION_TIMEOUT,
       `release lock for campaign ${campaignId}`
     );
@@ -189,11 +193,13 @@ export async function GET(request: NextRequest) {
   const executionTimer = new ExecutionTimer();
   let totalProcessed = 0;
   let processedCampaigns = 0;
-  
+
   try {
-    console.log(`🚀 [CRON START] Processing campaigns at ${new Date().toISOString()}`);
+    console.log(
+      `🚀 [CRON START] Processing campaigns at ${new Date().toISOString()}`
+    );
     console.log(`⏱️  [TIMER] Max execution time: ${MAX_EXECUTION_TIME}ms`);
-    
+
     // Verify this is a cron request (optional - can be removed for manual testing)
     const authHeader = request.headers.get("authorization");
     if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -214,13 +220,15 @@ export async function GET(request: NextRequest) {
 
     // 🚨 NEW: Early timeout check
     if (executionTimer.shouldTerminate()) {
-      console.log(`⏱️  [TIMEOUT] Execution time exceeded before campaign fetch`);
+      console.log(
+        `⏱️  [TIMEOUT] Execution time exceeded before campaign fetch`
+      );
       return NextResponse.json({
         success: true,
         message: "Execution timed out before processing",
         processed: 0,
         executionTime: executionTimer.formatElapsedTime(),
-        reason: "EARLY_TIMEOUT"
+        reason: "EARLY_TIMEOUT",
       });
     }
 
@@ -231,7 +239,7 @@ export async function GET(request: NextRequest) {
       DB_OPERATION_TIMEOUT,
       "fetch marketing campaigns"
     );
-    
+
     const sendingCampaigns = result.campaigns.filter(
       (campaign) => campaign.metadata.status?.value === "Sending"
     );
@@ -251,45 +259,55 @@ export async function GET(request: NextRequest) {
 
     // 🚨 NEW: Check time before processing scheduled campaigns
     if (!executionTimer.hasTimeLeft(10000)) {
-      console.log(`⏱️  [TIMEOUT] Not enough time to process scheduled campaigns`);
+      console.log(
+        `⏱️  [TIMEOUT] Not enough time to process scheduled campaigns`
+      );
       return NextResponse.json({
         success: true,
         message: "Time limit reached before processing scheduled campaigns",
         processed: 0,
         executionTime: executionTimer.formatElapsedTime(),
-        reason: "TIME_LIMIT_SCHEDULED"
+        reason: "TIME_LIMIT_SCHEDULED",
       });
     }
 
     // Transition scheduled campaigns to "Sending" status
     for (const campaign of scheduledCampaigns) {
       if (!executionTimer.hasTimeLeft(5000)) {
-        console.log(`⏱️  [TIMEOUT] Breaking scheduled campaign processing due to time limit`);
+        console.log(
+          `⏱️  [TIMEOUT] Breaking scheduled campaign processing due to time limit`
+        );
         break;
       }
-      
+
       console.log(
         `🚀 [SCHEDULE] Auto-starting campaign: ${campaign.metadata.name} (scheduled for ${campaign.metadata.send_date})`
       );
-      
+
       try {
         await withDatabaseTimeout(
-          () => updateCampaignStatus(campaign.id, "Sending", {
-            sent: 0,
-            delivered: 0,
-            opened: 0,
-            clicked: 0,
-            bounced: 0,
-            unsubscribed: 0,
-            open_rate: "0%",
-            click_rate: "0%",
-          }),
+          () =>
+            updateCampaignStatus(campaign.id, "Sending", {
+              sent: 0,
+              delivered: 0,
+              opened: 0,
+              clicked: 0,
+              bounced: 0,
+              unsubscribed: 0,
+              open_rate: "0%",
+              click_rate: "0%",
+            }),
           DB_OPERATION_TIMEOUT,
           `start scheduled campaign ${campaign.id}`
         );
-        console.log(`✅ [SCHEDULE] Campaign ${campaign.id} started successfully`);
+        console.log(
+          `✅ [SCHEDULE] Campaign ${campaign.id} started successfully`
+        );
       } catch (error) {
-        console.error(`❌ [SCHEDULE] Failed to start campaign ${campaign.id}:`, error);
+        console.error(
+          `❌ [SCHEDULE] Failed to start campaign ${campaign.id}:`,
+          error
+        );
         // Continue with other campaigns
       }
     }
@@ -298,7 +316,9 @@ export async function GET(request: NextRequest) {
     const allCampaignsToProcess = [...sendingCampaigns, ...scheduledCampaigns];
 
     if (allCampaignsToProcess.length === 0) {
-      console.log(`✅ [COMPLETE] No campaigns to process - execution time: ${executionTimer.formatElapsedTime()}`);
+      console.log(
+        `✅ [COMPLETE] No campaigns to process - execution time: ${executionTimer.formatElapsedTime()}`
+      );
       return NextResponse.json({
         success: true,
         message: "No campaigns to process",
@@ -314,13 +334,13 @@ export async function GET(request: NextRequest) {
       DB_OPERATION_TIMEOUT,
       "fetch settings"
     );
-    
+
     if (!settings) {
       console.error("❌ [SETTINGS] No settings found - cannot send emails");
       return NextResponse.json(
-        { 
+        {
           error: "Email settings not configured",
-          executionTime: executionTimer.formatElapsedTime()
+          executionTime: executionTimer.formatElapsedTime(),
         },
         { status: 500 }
       );
@@ -331,15 +351,23 @@ export async function GET(request: NextRequest) {
     // Process each campaign (both already-sending and newly-started scheduled campaigns)
     for (const campaign of allCampaignsToProcess) {
       if (!executionTimer.hasTimeLeft(10000)) {
-        console.log(`⏱️  [TIMEOUT] Breaking campaign processing loop - processed ${processedCampaigns}/${allCampaignsToProcess.length} campaigns`);
+        console.log(
+          `⏱️  [TIMEOUT] Breaking campaign processing loop - processed ${processedCampaigns}/${allCampaignsToProcess.length} campaigns`
+        );
         break;
       }
 
       let lockAcquired = false;
-      const campaignTimer = new ExecutionTimer(Math.min(CAMPAIGN_PROCESSING_TIMEOUT, executionTimer.getRemainingTime()));
-      
-      console.log(`\n🎯 [CAMPAIGN] Starting ${campaign.metadata.name} (${campaign.id})`);
-      console.log(`⏱️  [CAMPAIGN] Time remaining: ${executionTimer.getRemainingTime()}ms`);
+      const campaignTimer = new ExecutionTimer(
+        Math.min(CAMPAIGN_PROCESSING_TIMEOUT, executionTimer.getRemainingTime())
+      );
+
+      console.log(
+        `\n🎯 [CAMPAIGN] Starting ${campaign.metadata.name} (${campaign.id})`
+      );
+      console.log(
+        `⏱️  [CAMPAIGN] Time remaining: ${executionTimer.getRemainingTime()}ms`
+      );
 
       try {
         // CRITICAL FIX: Try to acquire DATABASE lock for this campaign to prevent duplicate sends
@@ -351,18 +379,23 @@ export async function GET(request: NextRequest) {
           continue; // Skip to next campaign
         }
         lockAcquired = true;
-        console.log(`🔒 [LOCK] Successfully acquired lock for campaign ${campaign.id}`);
+        console.log(
+          `🔒 [LOCK] Successfully acquired lock for campaign ${campaign.id}`
+        );
 
         // Check if campaign is scheduled for future
         const sendDate = campaign.metadata.send_date;
         if (sendDate) {
           const scheduledTime = new Date(sendDate);
 
-          console.log(`📅 [SCHEDULE] Campaign "${campaign.metadata.name}" schedule check:`, {
-            scheduledTime: scheduledTime.toISOString(),
-            currentTime: now.toISOString(),
-            shouldSend: scheduledTime <= now,
-          });
+          console.log(
+            `📅 [SCHEDULE] Campaign "${campaign.metadata.name}" schedule check:`,
+            {
+              scheduledTime: scheduledTime.toISOString(),
+              currentTime: now.toISOString(),
+              shouldSend: scheduledTime <= now,
+            }
+          );
 
           // Only process if scheduled time has passed
           if (scheduledTime > now) {
@@ -391,32 +424,43 @@ export async function GET(request: NextRequest) {
           }
 
           // Clear rate limit flag since we can retry now
-          console.log(`🔄 [RATE] Clearing rate limit flag for campaign ${campaign.id}`);
+          console.log(
+            `🔄 [RATE] Clearing rate limit flag for campaign ${campaign.id}`
+          );
           await withDatabaseTimeout(
-            () => updateEmailCampaign(campaign.id, {
-              rate_limit_hit_at: "",
-              retry_after: "",
-            } as any),
+            () =>
+              updateEmailCampaign(campaign.id, {
+                rate_limit_hit_at: "",
+                retry_after: "",
+              } as any),
             DB_OPERATION_TIMEOUT,
             `clear rate limit for campaign ${campaign.id}`
           );
         }
 
         // Process campaign batch with timeout protection
-        console.log(`📧 [PROCESS] Processing campaign batch for ${campaign.id}`);
+        console.log(
+          `📧 [PROCESS] Processing campaign batch for ${campaign.id}`
+        );
         const result = await Promise.race([
           processCampaignBatch(campaign, settings, campaignTimer),
           new Promise<any>((_, reject) => {
             setTimeout(() => {
-              reject(new Error(`Campaign processing timed out after ${CAMPAIGN_PROCESSING_TIMEOUT}ms`));
+              reject(
+                new Error(
+                  `Campaign processing timed out after ${CAMPAIGN_PROCESSING_TIMEOUT}ms`
+                )
+              );
             }, CAMPAIGN_PROCESSING_TIMEOUT);
-          })
+          }),
         ]);
 
         totalProcessed += result.processed;
         processedCampaigns++;
-        
-        console.log(`📊 [RESULT] Campaign ${campaign.id} processed ${result.processed} emails`);
+
+        console.log(
+          `📊 [RESULT] Campaign ${campaign.id} processed ${result.processed} emails`
+        );
 
         // Check if campaign completed
         if (result.completed && result.finalStats) {
@@ -430,16 +474,17 @@ export async function GET(request: NextRequest) {
           // Update status, stats, and sent_at in ONE atomic operation
           const { cosmic } = await import("@/lib/cosmic");
           await withDatabaseTimeout(
-            () => cosmic.objects.updateOne(campaign.id, {
-              metadata: {
-                status: {
-                  key: "sent",
-                  value: "Sent",
+            () =>
+              cosmic.objects.updateOne(campaign.id, {
+                metadata: {
+                  status: {
+                    key: "sent",
+                    value: "Sent",
+                  },
+                  stats: result.finalStats,
+                  sent_at: sentAt,
                 },
-                stats: result.finalStats,
-                sent_at: sentAt,
-              },
-            }),
+              }),
             DB_OPERATION_TIMEOUT,
             `mark campaign ${campaign.id} as sent`
           );
@@ -477,22 +522,28 @@ export async function GET(request: NextRequest) {
         // Update campaign with error status
         try {
           await withDatabaseTimeout(
-            () => updateCampaignStatus(campaign.id, "Cancelled", {
-              sent: 0,
-              delivered: 0,
-              opened: 0,
-              clicked: 0,
-              bounced: 0,
-              unsubscribed: 0,
-              open_rate: "0%",
-              click_rate: "0%",
-            }),
+            () =>
+              updateCampaignStatus(campaign.id, "Cancelled", {
+                sent: 0,
+                delivered: 0,
+                opened: 0,
+                clicked: 0,
+                bounced: 0,
+                unsubscribed: 0,
+                open_rate: "0%",
+                click_rate: "0%",
+              }),
             DB_OPERATION_TIMEOUT,
             `cancel campaign ${campaign.id}`
           );
-          console.log(`⚠️  [CANCELLED] Campaign ${campaign.id} marked as cancelled due to error`);
+          console.log(
+            `⚠️  [CANCELLED] Campaign ${campaign.id} marked as cancelled due to error`
+          );
         } catch (cancelError) {
-          console.error(`❌ [ERROR] Failed to cancel campaign ${campaign.id}:`, cancelError);
+          console.error(
+            `❌ [ERROR] Failed to cancel campaign ${campaign.id}:`,
+            cancelError
+          );
         }
       } finally {
         // CRITICAL FIX: Always release the DATABASE lock, even if processing fails
@@ -502,14 +553,28 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      console.log(`✅ [CAMPAIGN] Completed ${campaign.metadata.name} - time elapsed: ${campaignTimer.formatElapsedTime()}`);
+      console.log(
+        `✅ [CAMPAIGN] Completed ${
+          campaign.metadata.name
+        } - time elapsed: ${campaignTimer.formatElapsedTime()}`
+      );
     }
 
     const finalExecutionTime = executionTimer.formatElapsedTime();
     console.log(`\n🎉 [COMPLETE] Cron job completed successfully!`);
-    console.log(`📊 [SUMMARY] Processed ${totalProcessed} emails across ${processedCampaigns}/${allCampaignsToProcess.length} campaigns`);
+    console.log(
+      `📊 [SUMMARY] Processed ${totalProcessed} emails across ${processedCampaigns}/${allCampaignsToProcess.length} campaigns`
+    );
     console.log(`⏱️  [TIME] Total execution time: ${finalExecutionTime}`);
-    console.log(`⚡ [PERFORMANCE] Average: ${totalProcessed > 0 ? Math.round(totalProcessed / (executionTimer.getElapsedTime() / 1000)) : 0} emails/second`);
+    console.log(
+      `⚡ [PERFORMANCE] Average: ${
+        totalProcessed > 0
+          ? Math.round(
+              totalProcessed / (executionTimer.getElapsedTime() / 1000)
+            )
+          : 0
+      } emails/second`
+    );
 
     return NextResponse.json({
       success: true,
@@ -521,14 +586,20 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     const finalExecutionTime = executionTimer.formatElapsedTime();
-    console.error(`❌ [FATAL] Cron job error after ${finalExecutionTime}:`, error);
-    
-    return NextResponse.json({ 
-      error: "Cron job failed", 
-      executionTime: finalExecutionTime,
-      processed: totalProcessed,
-      campaignsProcessed: processedCampaigns
-    }, { status: 500 });
+    console.error(
+      `❌ [FATAL] Cron job error after ${finalExecutionTime}:`,
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error: "Cron job failed",
+        executionTime: finalExecutionTime,
+        processed: totalProcessed,
+        campaignsProcessed: processedCampaigns,
+      },
+      { status: 500 }
+    );
   }
 }
 
@@ -537,20 +608,23 @@ async function processCampaignBatch(
   settings: any,
   timer: ExecutionTimer
 ) {
-  console.log(`📋 [BATCH] Starting batch processing for campaign ${campaign.id}`);
+  console.log(
+    `📋 [BATCH] Starting batch processing for campaign ${campaign.id}`
+  );
   console.log(`⏱️  [BATCH] Time remaining: ${timer.getRemainingTime()}ms`);
-  
+
   // FIXED: Get all target contacts for this campaign with REMOVED artificial limits
   // Changed: Removed the 10K limit that was preventing Community Spotlight from processing all 37K contacts
   const allContacts = await withDatabaseTimeout(
-    () => getCampaignTargetContacts(campaign, {
-      maxContactsPerList: 15000, // Changed: Increased from 2500 to 15000 for better large campaign support
-      totalMaxContacts: 100000, // Changed: Removed artificial 10K limit - increased to 100K for large campaigns
-    }),
+    () =>
+      getCampaignTargetContacts(campaign, {
+        maxContactsPerList: 15000, // Changed: Increased from 2500 to 15000 for better large campaign support
+        totalMaxContacts: 100000, // Changed: Removed artificial 10K limit - increased to 100K for large campaigns
+      }),
     DB_OPERATION_TIMEOUT,
     `fetch target contacts for campaign ${campaign.id}`
   );
-  
+
   console.log(
     `📊 [CONTACTS] Campaign ${campaign.id}: Fetched ${allContacts.length} total target contacts (FIXED: removed 10K artificial limit)`
   );
@@ -559,12 +633,13 @@ async function processCampaignBatch(
   console.log(
     `🔍 [FILTER] Filtering unsent contacts from ${allContacts.length} total contacts...`
   );
-  
+
   const unsentContactIds = await withDatabaseTimeout(
-    () => filterUnsentContacts(
-      campaign.id,
-      allContacts.map((c) => c.id)
-    ),
+    () =>
+      filterUnsentContacts(
+        campaign.id,
+        allContacts.map((c) => c.id)
+      ),
     DB_OPERATION_TIMEOUT,
     `filter unsent contacts for campaign ${campaign.id}`
   );
@@ -620,12 +695,14 @@ async function processCampaignBatch(
 
   // 🚨 NEW: Check time before reserving contacts
   if (!timer.hasTimeLeft(5000)) {
-    console.log(`⏱️  [TIMEOUT] Not enough time to reserve contacts - ${timer.getRemainingTime()}ms remaining`);
+    console.log(
+      `⏱️  [TIMEOUT] Not enough time to reserve contacts - ${timer.getRemainingTime()}ms remaining`
+    );
     return {
       processed: 0,
       completed: false,
       finalStats: undefined,
-      reason: "TIME_LIMIT_RESERVE"
+      reason: "TIME_LIMIT_RESERVE",
     };
   }
 
@@ -636,7 +713,7 @@ async function processCampaignBatch(
       unsentContacts.length
     )} contacts atomically...`
   );
-  
+
   const { reserved: reservedContacts, pendingRecordIds } =
     await withDatabaseTimeout(
       () => reserveContactsForSending(campaign.id, unsentContacts, BATCH_SIZE),
@@ -652,11 +729,13 @@ async function processCampaignBatch(
       processed: 0,
       completed: false,
       finalStats: undefined,
-      reason: "NO_CONTACTS_RESERVED"
+      reason: "NO_CONTACTS_RESERVED",
     };
   }
 
-  console.log(`✅ [RESERVE] Successfully reserved ${reservedContacts.length} contacts`);
+  console.log(
+    `✅ [RESERVE] Successfully reserved ${reservedContacts.length} contacts`
+  );
 
   // Send emails with proper rate limiting
   let batchesProcessed = 0;
@@ -670,12 +749,20 @@ async function processCampaignBatch(
 
   // 🚨 NEW: Time-aware batch processing
   const availableTime = timer.getRemainingTime();
-  const estimatedTimePerEmail = MIN_DELAY_MS + DELAY_BETWEEN_DB_OPERATIONS + 500; // Add buffer
+  const estimatedTimePerEmail =
+    MIN_DELAY_MS + DELAY_BETWEEN_DB_OPERATIONS + 500; // Add buffer
   const maxEmailsInTime = Math.floor(availableTime / estimatedTimePerEmail);
-  const effectiveMaxBatches = Math.min(MAX_BATCHES_PER_RUN, Math.ceil(maxEmailsInTime / BATCH_SIZE));
-  
-  console.log(`⏱️  [TIMING] Available time: ${availableTime}ms, estimated time per email: ${estimatedTimePerEmail}ms`);
-  console.log(`📊 [TIMING] Max emails in time: ${maxEmailsInTime}, effective max batches: ${effectiveMaxBatches}`);
+  const effectiveMaxBatches = Math.min(
+    MAX_BATCHES_PER_RUN,
+    Math.ceil(maxEmailsInTime / BATCH_SIZE)
+  );
+
+  console.log(
+    `⏱️  [TIMING] Available time: ${availableTime}ms, estimated time per email: ${estimatedTimePerEmail}ms`
+  );
+  console.log(
+    `📊 [TIMING] Max emails in time: ${maxEmailsInTime}, effective max batches: ${effectiveMaxBatches}`
+  );
 
   // Process reserved contacts in smaller batches
   for (
@@ -684,19 +771,25 @@ async function processCampaignBatch(
     i += BATCH_SIZE
   ) {
     if (rateLimitHit || !timer.hasTimeLeft(2000)) {
-      console.log(`⏱️  [TIMEOUT] Breaking batch loop - time remaining: ${timer.getRemainingTime()}ms`);
+      console.log(
+        `⏱️  [TIMEOUT] Breaking batch loop - time remaining: ${timer.getRemainingTime()}ms`
+      );
       break;
     }
 
     const batch = reservedContacts.slice(i, i + BATCH_SIZE);
     console.log(
-      `📦 [BATCH ${batchesProcessed + 1}] Processing ${batch.length} reserved contacts`
+      `📦 [BATCH ${batchesProcessed + 1}] Processing ${
+        batch.length
+      } reserved contacts`
     );
 
     // Process each reserved contact with proper rate limiting
     for (let contactIndex = 0; contactIndex < batch.length; contactIndex++) {
       if (rateLimitHit || !timer.hasTimeLeft(1000)) {
-        console.log(`⏱️  [TIMEOUT] Breaking contact loop - time remaining: ${timer.getRemainingTime()}ms`);
+        console.log(
+          `⏱️  [TIMEOUT] Breaking contact loop - time remaining: ${timer.getRemainingTime()}ms`
+        );
         break;
       }
 
@@ -704,7 +797,9 @@ async function processCampaignBatch(
 
       // CRITICAL FIX: Add explicit undefined check to satisfy TypeScript
       if (!contact) {
-        console.error(`❌ [ERROR] Undefined contact at batch index ${contactIndex}`);
+        console.error(
+          `❌ [ERROR] Undefined contact at batch index ${contactIndex}`
+        );
         continue;
       }
 
@@ -786,14 +881,15 @@ async function processCampaignBatch(
 
         // Update the pending record to "sent" status
         await withDatabaseTimeout(
-          () => createCampaignSend({
-            campaignId: campaign.id,
-            contactId: contact.id,
-            contactEmail: contact.metadata.email,
-            status: "sent",
-            resendMessageId: result.id,
-            pendingRecordId: pendingRecordId,
-          }),
+          () =>
+            createCampaignSend({
+              campaignId: campaign.id,
+              contactId: contact.id,
+              contactEmail: contact.metadata.email,
+              status: "sent",
+              resendMessageId: result.id,
+              pendingRecordId: pendingRecordId,
+            }),
           DB_OPERATION_TIMEOUT,
           `update send record for ${contact.metadata.email}`
         );
@@ -827,10 +923,11 @@ async function processCampaignBatch(
 
           // Save rate limit state
           await withDatabaseTimeout(
-            () => updateEmailCampaign(campaign.id, {
-              rate_limit_hit_at: new Date().toISOString(),
-              retry_after: retryAfter,
-            } as any),
+            () =>
+              updateEmailCampaign(campaign.id, {
+                rate_limit_hit_at: new Date().toISOString(),
+                retry_after: retryAfter,
+              } as any),
             DB_OPERATION_TIMEOUT,
             `save rate limit state for campaign ${campaign.id}`
           );
@@ -847,14 +944,15 @@ async function processCampaignBatch(
 
         try {
           await withDatabaseTimeout(
-            () => createCampaignSend({
-              campaignId: campaign.id,
-              contactId: contact.id,
-              contactEmail: contact.metadata.email,
-              status: "failed",
-              errorMessage: error.message,
-              pendingRecordId: pendingRecordId,
-            }),
+            () =>
+              createCampaignSend({
+                campaignId: campaign.id,
+                contactId: contact.id,
+                contactEmail: contact.metadata.email,
+                status: "failed",
+                errorMessage: error.message,
+                pendingRecordId: pendingRecordId,
+              }),
             DB_OPERATION_TIMEOUT,
             `mark send as failed for ${contact.metadata.email}`
           );
@@ -895,13 +993,14 @@ async function processCampaignBatch(
       );
 
       await withDatabaseTimeout(
-        () => updateCampaignProgress(campaign.id, {
-          sent: freshStats.sent,
-          failed: freshStats.failed + freshStats.bounced,
-          total: allContacts.length,
-          progress_percentage: progressPercentage,
-          last_batch_completed: new Date().toISOString(),
-        }),
+        () =>
+          updateCampaignProgress(campaign.id, {
+            sent: freshStats.sent,
+            failed: freshStats.failed + freshStats.bounced,
+            total: allContacts.length,
+            progress_percentage: progressPercentage,
+            last_batch_completed: new Date().toISOString(),
+          }),
         DB_OPERATION_TIMEOUT,
         `update progress for campaign ${campaign.id}`
       );
@@ -910,12 +1009,19 @@ async function processCampaignBatch(
         `📊 [BATCH STATS] Batch ${batchesProcessed} complete. Database stats: ${freshStats.sent} sent, ${freshStats.pending} pending, ${freshStats.failed} failed, ${freshStats.bounced} bounced`
       );
     } catch (progressError) {
-      console.error(`⚠️  [PROGRESS ERROR] Failed to update campaign progress:`, progressError);
+      console.error(
+        `⚠️  [PROGRESS ERROR] Failed to update campaign progress:`,
+        progressError
+      );
       // Continue processing even if progress update fails
     }
 
     // Optimized delay between batches for MongoDB/Lambda performance
-    if (batchesProcessed < effectiveMaxBatches && !rateLimitHit && timer.hasTimeLeft(2000)) {
+    if (
+      batchesProcessed < effectiveMaxBatches &&
+      !rateLimitHit &&
+      timer.hasTimeLeft(2000)
+    ) {
       console.log(
         `⏸️  [DELAY] Waiting ${DELAY_BETWEEN_BATCHES}ms before next batch for MongoDB optimization...`
       );
@@ -970,8 +1076,10 @@ async function processCampaignBatch(
     }
   }
 
-  console.log(`📊 [BATCH RESULT] Processed ${emailsProcessed} emails in ${batchesProcessed} batches`);
-  
+  console.log(
+    `📊 [BATCH RESULT] Processed ${emailsProcessed} emails in ${batchesProcessed} batches`
+  );
+
   return {
     processed: emailsProcessed,
     completed: false,

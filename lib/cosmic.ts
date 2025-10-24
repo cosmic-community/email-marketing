@@ -2836,22 +2836,29 @@ export async function getCampaignTargetContacts(
       campaign.metadata.target_contacts &&
       campaign.metadata.target_contacts.length > 0
     ) {
-      for (const contactId of campaign.metadata.target_contacts) {
+      // CRITICAL FIX: Validate that each contact entry is valid before processing
+      for (const contactRef of campaign.metadata.target_contacts) {
         try {
-          const contact = await getEmailContact(contactId);
-          if (
-            contact &&
-            contact.metadata.status.value === "Active" &&
-            !addedContactIds.has(contact.id)
-          ) {
-            allContacts.push(contact);
-            addedContactIds.add(contact.id);
+          // Extract contact ID - handle both string IDs and contact objects
+          const contactId = typeof contactRef === "string" ? contactRef : contactRef;
+          
+          // CRITICAL FIX: Ensure contactId is a string before passing to getEmailContact
+          if (typeof contactId === "string") {
+            const contact = await getEmailContact(contactId);
+            if (
+              contact &&
+              contact.metadata.status.value === "Active" &&
+              !addedContactIds.has(contact.id)
+            ) {
+              allContacts.push(contact);
+              addedContactIds.add(contact.id);
+            }
           }
 
           // Small delay between contact validation to prevent API overload
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
-          console.error(`Error fetching contact ${contactId}:`, error);
+          console.error(`Error fetching contact ${contactRef}:`, error);
         }
       }
     }
@@ -2988,26 +2995,33 @@ export async function getCampaignTargetCount(
       campaign.metadata.target_contacts &&
       campaign.metadata.target_contacts.length > 0
     ) {
-      for (const contactId of campaign.metadata.target_contacts) {
+      // CRITICAL FIX: Validate contact references before processing
+      for (const contactRef of campaign.metadata.target_contacts) {
         try {
-          // Verify contact exists and is active (minimal query)
-          const { objects } = await cosmic.objects
-            .find({
-              id: contactId,
-              type: "email-contacts",
-              "metadata.status": "Active",
-            })
-            .props(["id"])
-            .limit(1);
+          // Extract contact ID - handle both string IDs and contact objects
+          const contactId = typeof contactRef === "string" ? contactRef : contactRef;
+          
+          // CRITICAL FIX: Ensure contactId is a string before using in query
+          if (typeof contactId === "string") {
+            // Verify contact exists and is active (minimal query)
+            const { objects } = await cosmic.objects
+              .find({
+                id: contactId,
+                type: "email-contacts",
+                "metadata.status": "Active",
+              })
+              .props(["id"])
+              .limit(1);
 
-          if (objects.length > 0) {
-            countedContactIds.add(contactId);
+            if (objects.length > 0) {
+              countedContactIds.add(contactId);
+            }
           }
 
           // Small delay between contact validation to prevent API overload
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
-          console.error(`Error validating contact ${contactId}:`, error);
+          console.error(`Error validating contact ${contactRef}:`, error);
         }
       }
     }

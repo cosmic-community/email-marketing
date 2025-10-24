@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createEmailContact, getSettings } from '@/lib/cosmic'
 import { sendEmail } from '@/lib/resend'
+import { validateBotProtection, isRateLimited } from '@/lib/bot-protection'
+import { cosmic } from '@/lib/cosmic'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    const clientIP = request.ip || request.headers.get('x-forwarded-for') || 'unknown'
+    
+    // Check rate limiting first
+    if (await isRateLimited(clientIP)) {
+      return NextResponse.json(
+        { error: 'Too many subscription attempts. Please wait before trying again.' },
+        { status: 429 }
+      )
+    }
     
     // Validate required fields
     if (!body.email) {
@@ -19,6 +30,47 @@ export async function POST(request: NextRequest) {
     if (!emailRegex.test(body.email)) {
       return NextResponse.json(
         { error: 'Please enter a valid email address' },
+        { status: 400 }
+      )
+    }
+
+    // Check if email is already subscribed
+    try {
+      const { objects } = await cosmic.objects
+        .find({
+          type: 'email-contacts',
+          'metadata.email': body.email.toLowerCase().trim()
+        })
+        .props(['id', 'metadata.status'])
+        .limit(1)
+
+      if (objects.length > 0) {
+        const existingContact = objects[0]
+        const status = existingContact.metadata?.status?.value || existingContact.metadata?.status
+        
+        if (status === 'Active') {
+          return NextResponse.json(
+            { error: 'This email is already subscribed to our list' },
+            { status: 409 }
+          )
+        } else if (status === 'Unsubscribed') {
+          return NextResponse.json(
+            { error: 'This email was previously unsubscribed. Please contact support to reactivate your subscription.' },
+            { status: 409 }
+          )
+        }
+      }
+    } catch (duplicateCheckError) {
+      // If duplicate check fails, log but continue (don't block subscription)
+      console.warn('Duplicate email check failed:', duplicateCheckError)
+    }
+
+    // Advanced bot protection validation
+    const botValidation = await validateBotProtection(body, request)
+    if (!botValidation.isValid) {
+      console.warn(`Bot detected from IP ${clientIP}:`, botValidation.reason)
+      return NextResponse.json(
+        { error: 'Automated submission detected. Please try again manually.' },
         { status: 400 }
       )
     }
@@ -38,9 +90,9 @@ export async function POST(request: NextRequest) {
       last_name: body.last_name || '',
       email: body.email,
       status: 'Active',
-      tags: ['Public Signup', ...(body.tags || [])],
+      tags: ['Public Signup', 'Bot Protection Verified', ...(body.tags || [])],
       subscribe_date: new Date().toISOString().split('T')[0],
-      notes: body.source ? `Subscribed via: ${body.source}` : 'Public subscription'
+      notes: `${body.source ? `Subscribed via: ${body.source}` : 'Public subscription'}. IP: ${clientIP}. Bot score: ${botValidation.score}/100`
     })
 
     // Prepare email configuration
@@ -123,7 +175,8 @@ export async function POST(request: NextRequest) {
         reply_to: settings.metadata.reply_to_email || settings.metadata.from_email,
         headers: {
           'X-Email-Type': 'subscription-confirmation',
-          'X-Subscriber-Email': body.email
+          'X-Subscriber-Email': body.email,
+          'X-Bot-Protection': 'verified'
         }
       })
 
@@ -174,6 +227,14 @@ export async function POST(request: NextRequest) {
                 <td style="padding: 8px 0; color: #1f2937;">${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}</td>
               </tr>
               <tr>
+                <td style="padding: 8px 0; font-weight: 500; color: #374151;">IP Address:</td>
+                <td style="padding: 8px 0; color: #1f2937;">${clientIP}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; font-weight: 500; color: #374151;">Bot Score:</td>
+                <td style="padding: 8px 0; color: #059669; font-weight: 500;">${botValidation.score}/100 (${botValidation.score >= 70 ? 'Human' : 'Suspicious'})</td>
+              </tr>
+              <tr>
                 <td style="padding: 8px 0; font-weight: 500; color: #374151;">Status:</td>
                 <td style="padding: 8px 0; color: #059669; font-weight: 500;">Active</td>
               </tr>
@@ -184,6 +245,9 @@ export async function POST(request: NextRequest) {
             <h3 style="color: #374151; margin: 0 0 8px 0; font-size: 16px;">Tags Applied:</h3>
             <span style="background-color: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500;">
               Public Signup
+            </span>
+            <span style="background-color: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; margin-left: 4px;">
+              Bot Protection Verified
             </span>
             ${body.tags && body.tags.length > 0 ? body.tags.map((tag: string) => `
             <span style="background-color: #f3f4f6; color: #374151; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-left: 4px;">
@@ -215,7 +279,8 @@ export async function POST(request: NextRequest) {
         headers: {
           'X-Email-Type': 'subscription-notification',
           'X-Subscriber-Email': body.email,
-          'X-Notification-Type': 'new-subscription'
+          'X-Notification-Type': 'new-subscription',
+          'X-Bot-Protection': 'verified'
         }
       })
 
@@ -233,7 +298,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error creating subscription:', error)
     
-    // Check if it's a duplicate email error
+    // Check if it's a duplicate email error from createEmailContact
     if (error && typeof error === 'object' && 'message' in error) {
       const errorMessage = (error as Error).message
       if (errorMessage.includes('duplicate') || errorMessage.includes('already exists')) {

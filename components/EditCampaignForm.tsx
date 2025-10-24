@@ -153,6 +153,11 @@ export default function EditCampaignForm({
     return () => clearTimeout(timer);
   }, [tagSearchTerm, searchTags]);
 
+  // Get selected contacts details from the contacts prop (already populated with depth=1)
+  const selectedContactsDetails = contacts.filter((contact) =>
+    formData.contact_ids.includes(contact.id)
+  );
+
   // Initialize form data from campaign
   useEffect(() => {
     const initializeFormData = () => {
@@ -176,13 +181,31 @@ export default function EditCampaignForm({
         typeof list === "string" ? list : list.id
       );
 
+      // Extract contact IDs - handle both string IDs and objects with id property
+      const contactIds = targetContacts.map((contact) =>
+        typeof contact === "string" ? contact : contact.id
+      );
+
+      // Convert ISO datetime to datetime-local format for display
+      let displaySendDate = "";
+      if (campaign.metadata.send_date) {
+        const date = new Date(campaign.metadata.send_date);
+        // Format as "YYYY-MM-DDTHH:mm" in local time
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        const hours = String(date.getHours()).padStart(2, "0");
+        const minutes = String(date.getMinutes()).padStart(2, "0");
+        displaySendDate = `${year}-${month}-${day}T${hours}:${minutes}`;
+      }
+
       setFormData({
         name: campaign.metadata.name || "",
         target_type: targetType,
         list_ids: listIds,
-        contact_ids: targetContacts,
+        contact_ids: contactIds,
         target_tags: targetTags,
-        send_date: campaign.metadata.send_date || "",
+        send_date: displaySendDate,
         schedule_type: campaign.metadata.send_date ? "scheduled" : "now",
         public_sharing_enabled:
           campaign.metadata.public_sharing_enabled ?? false,
@@ -257,9 +280,31 @@ export default function EditCampaignForm({
         updateData.target_tags = formData.target_tags;
       }
 
-      // Set send date
-      updateData.send_date =
-        formData.schedule_type === "scheduled" ? formData.send_date : "";
+      // Set send date - convert datetime-local string to ISO string with timezone
+      if (formData.schedule_type === "scheduled" && formData.send_date) {
+        // datetime-local gives us "YYYY-MM-DDTHH:mm" in local time
+        // We need to convert this to an ISO string that preserves the timezone
+        const localDateTime = new Date(formData.send_date);
+        updateData.send_date = localDateTime.toISOString();
+      } else {
+        updateData.send_date = "";
+      }
+
+      // Automatically set status based on schedule type
+      // If scheduled for future, set status to "Scheduled", otherwise keep as "Draft"
+      if (formData.schedule_type === "scheduled" && updateData.send_date) {
+        const scheduledTime = new Date(updateData.send_date);
+        const now = new Date();
+        if (scheduledTime > now) {
+          updateData.status = "Scheduled";
+        } else {
+          // If scheduled time is in the past, keep as Draft
+          updateData.status = "Draft";
+        }
+      } else {
+        // No schedule or immediate send - keep as Draft
+        updateData.status = "Draft";
+      }
 
       const response = await fetch(`/api/campaigns/${campaign.id}`, {
         method: "PUT",
@@ -274,9 +319,15 @@ export default function EditCampaignForm({
         throw new Error(error.error || "Failed to update campaign");
       }
 
+      // Show appropriate success message based on status
+      const successMessage =
+        updateData.status === "Scheduled"
+          ? "Campaign scheduled successfully"
+          : "Campaign updated successfully";
+
       toast({
         title: "Success",
-        description: "Campaign updated successfully",
+        description: successMessage,
         variant: "default",
       });
 
@@ -497,82 +548,133 @@ export default function EditCampaignForm({
           {/* Contacts Search Selection */}
           {formData.target_type === "contacts" && (
             <div className="space-y-3 p-4 border rounded-lg bg-gray-50">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">
-                  Search & Select Contacts
-                </Label>
-                <span className="text-sm text-gray-500">
-                  {formData.contact_ids.length} selected
-                </span>
-              </div>
-
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                <Input
-                  value={contactSearchTerm}
-                  onChange={(e) => setContactSearchTerm(e.target.value)}
-                  placeholder="Search contacts by name or email..."
-                  className="pl-10"
-                  disabled={!canEdit}
-                />
-                {isSearchingContacts && (
-                  <div className="absolute right-3 top-3">
-                    <div className="w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+              {/* Selected Contacts List */}
+              {formData.contact_ids.length > 0 && (
+                <div className="space-y-2 mb-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">
+                      Selected Contacts
+                    </Label>
+                    <span className="text-sm text-gray-500">
+                      {formData.contact_ids.length} selected
+                    </span>
                   </div>
-                )}
-              </div>
 
-              {/* Search Results */}
-              {searchedContacts.length > 0 && (
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {searchedContacts
-                    .filter(
-                      (contact) => contact.metadata.status.value === "Active"
-                    )
-                    .map((contact) => (
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {selectedContactsDetails.map((contact) => (
                       <div
                         key={contact.id}
-                        className="flex items-center space-x-3 p-2 bg-white rounded border"
+                        className="flex items-center justify-between p-3 bg-white rounded border"
                       >
-                        <Checkbox
-                          id={`contact-${contact.id}`}
-                          checked={formData.contact_ids.includes(contact.id)}
-                          onCheckedChange={(checked) =>
-                            handleContactSelect(contact.id, checked as boolean)
-                          }
-                          disabled={!canEdit}
-                        />
-                        <label
-                          htmlFor={`contact-${contact.id}`}
-                          className="flex-1 cursor-pointer"
-                        >
-                          <div className="font-medium">
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">
                             {contact.metadata.first_name}{" "}
                             {contact.metadata.last_name}
                           </div>
                           <div className="text-sm text-gray-500">
                             {contact.metadata.email}
                           </div>
-                        </label>
+                        </div>
+                        {canEdit && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              handleContactSelect(contact.id, false)
+                            }
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     ))}
+                  </div>
                 </div>
               )}
 
-              {contactSearchTerm &&
-                contactSearchTerm.length >= 2 &&
-                !isSearchingContacts &&
-                searchedContacts.length === 0 && (
-                  <p className="text-sm text-gray-500 py-4 text-center">
-                    No contacts found for "{contactSearchTerm}"
-                  </p>
+              {/* Search to Add More Contacts */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">
+                    {formData.contact_ids.length > 0
+                      ? "Add More Contacts"
+                      : "Search & Select Contacts"}
+                  </Label>
+                </div>
+
+                <div className="relative">
+                  <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                  <Input
+                    value={contactSearchTerm}
+                    onChange={(e) => setContactSearchTerm(e.target.value)}
+                    placeholder="Search contacts by name or email..."
+                    className="pl-10"
+                    disabled={!canEdit}
+                  />
+                  {isSearchingContacts && (
+                    <div className="absolute right-3 top-3">
+                      <div className="w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Search Results */}
+                {searchedContacts.length > 0 && (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {searchedContacts
+                      .filter(
+                        (contact) => contact.metadata.status.value === "Active"
+                      )
+                      .map((contact) => (
+                        <div
+                          key={contact.id}
+                          className="flex items-center space-x-3 p-2 bg-white rounded border"
+                        >
+                          <Checkbox
+                            id={`contact-${contact.id}`}
+                            checked={formData.contact_ids.includes(contact.id)}
+                            onCheckedChange={(checked) =>
+                              handleContactSelect(
+                                contact.id,
+                                checked as boolean
+                              )
+                            }
+                            disabled={!canEdit}
+                          />
+                          <label
+                            htmlFor={`contact-${contact.id}`}
+                            className="flex-1 cursor-pointer"
+                          >
+                            <div className="font-medium">
+                              {contact.metadata.first_name}{" "}
+                              {contact.metadata.last_name}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {contact.metadata.email}
+                            </div>
+                          </label>
+                        </div>
+                      ))}
+                  </div>
                 )}
 
-              {!contactSearchTerm && (
-                <p className="text-sm text-gray-500 py-4 text-center">
-                  Type to search for contacts to add
-                </p>
-              )}
+                {contactSearchTerm &&
+                  contactSearchTerm.length >= 2 &&
+                  !isSearchingContacts &&
+                  searchedContacts.length === 0 && (
+                    <p className="text-sm text-gray-500 py-4 text-center">
+                      No contacts found for "{contactSearchTerm}"
+                    </p>
+                  )}
+
+                {!contactSearchTerm && formData.contact_ids.length === 0 && (
+                  <p className="text-sm text-gray-500 py-4 text-center">
+                    Type to search for contacts to add
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
@@ -690,7 +792,9 @@ export default function EditCampaignForm({
 
           {formData.schedule_type === "scheduled" && (
             <div className="space-y-2">
-              <Label htmlFor="send-date">Send Date & Time</Label>
+              <Label htmlFor="send-date">
+                Send Date & Time (Your Local Time)
+              </Label>
               <Input
                 id="send-date"
                 type="datetime-local"
@@ -703,6 +807,10 @@ export default function EditCampaignForm({
                 }
                 disabled={!canEdit}
               />
+              <p className="text-xs text-gray-500">
+                Your timezone:{" "}
+                {Intl.DateTimeFormat().resolvedOptions().timeZone}
+              </p>
             </div>
           )}
         </div>

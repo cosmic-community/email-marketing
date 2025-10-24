@@ -107,7 +107,15 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
           <CampaignPageClient
             campaign={campaign}
             templates={templates}
-            contacts={[]} // Pass empty array - contacts are loaded via search in the components
+            contacts={
+              // With depth=1, target_contacts should be populated with full objects
+              // If they're strings, pass empty array and contacts will be searched via the UI
+              Array.isArray(campaign.metadata.target_contacts) &&
+              campaign.metadata.target_contacts.length > 0 &&
+              typeof campaign.metadata.target_contacts[0] === "object"
+                ? (campaign.metadata.target_contacts as EmailContact[])
+                : []
+            }
             lists={lists}
             stats={stats}
             unsubscribedContacts={unsubscribedContacts}

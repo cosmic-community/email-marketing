@@ -129,17 +129,7 @@ export default function SendCampaignButton({
     }
   };
 
-  const handleSchedule = async () => {
-    if (!hasTargets) {
-      addToast("Campaign has no target recipients", "error");
-      return;
-    }
-
-    if (!currentCampaign.metadata.send_date) {
-      addToast("No send date specified for scheduling", "error");
-      return;
-    }
-
+  const handleReturnToDraft = async () => {
     setIsLoading(true);
 
     try {
@@ -149,21 +139,25 @@ export default function SendCampaignButton({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          status: "Scheduled",
+          status: "Draft",
         }),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to schedule campaign");
+        throw new Error(
+          errorData.error || "Failed to return campaign to draft"
+        );
       }
 
-      addToast("Campaign scheduled successfully!", "success");
+      addToast("Campaign returned to draft", "success");
       router.refresh();
     } catch (error) {
-      console.error("Campaign schedule error:", error);
+      console.error("Return to draft error:", error);
       addToast(
-        error instanceof Error ? error.message : "Failed to schedule campaign",
+        error instanceof Error
+          ? error.message
+          : "Failed to return campaign to draft",
         "error"
       );
     } finally {
@@ -320,30 +314,44 @@ export default function SendCampaignButton({
   if (status === "Scheduled") {
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-center p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <Clock className="h-5 w-5 text-blue-600 mr-2" />
-          <span className="text-blue-800 font-medium">Campaign Scheduled</span>
-        </div>
-
-        {currentCampaign.metadata.send_date && (
-          <div className="text-sm text-gray-600 text-center">
-            <div>
-              Scheduled for:{" "}
-              {new Date(currentCampaign.metadata.send_date).toLocaleString()}
-            </div>
-            <div className="mt-1">{getRecipientDisplay()}</div>
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center justify-center mb-2">
+            <Clock className="h-5 w-5 text-blue-600 mr-2" />
+            <span className="text-blue-800 font-medium">
+              Campaign Scheduled
+            </span>
           </div>
-        )}
+          {currentCampaign.metadata.send_date && (
+            <div className="text-sm text-gray-700 text-center">
+              <div className="font-medium">
+                {new Date(currentCampaign.metadata.send_date).toLocaleString()}
+              </div>
+              <div className="mt-1 text-gray-600">{getRecipientDisplay()}</div>
+            </div>
+          )}
+        </div>
 
         <Button
           onClick={() => setShowConfirmModal(true)}
           disabled={isLoading || !hasTargets}
           className="w-full"
-          variant="outline"
         >
           <Send className="h-4 w-4 mr-2" />
           Send Now Instead
         </Button>
+
+        <Button
+          onClick={handleReturnToDraft}
+          disabled={isLoading}
+          variant="outline"
+          className="w-full"
+        >
+          Return to Draft
+        </Button>
+
+        <div className="text-xs text-gray-500 text-center pt-2 border-t border-gray-200">
+          The campaign will automatically send at the scheduled time.
+        </div>
       </div>
     );
   }
@@ -393,34 +401,17 @@ export default function SendCampaignButton({
         )}
       </Button>
 
-      {/* Schedule Button (only show if send_date is set and in future) */}
-      {currentCampaign.metadata.send_date && isScheduledForFuture() && (
-        <Button
-          onClick={handleSchedule}
-          disabled={isLoading || !hasTargets}
-          variant="outline"
-          className="w-full"
-        >
-          {isLoading ? (
-            <>
-              <LoadingSpinner size="sm" className="mr-2" />
-              Scheduling...
-            </>
-          ) : (
-            <>
-              <Clock className="h-4 w-4 mr-2" />
-              Schedule for{" "}
-              {new Date(
-                currentCampaign.metadata.send_date
-              ).toLocaleDateString()}
-            </>
-          )}
-        </Button>
-      )}
-
       <div className="text-xs text-gray-500 text-center pt-2 border-t border-gray-200">
-        Emails will be sent in batches via background processing for optimal
-        delivery.
+        <div>
+          Emails will be sent in batches via background processing for optimal
+          delivery.
+        </div>
+        {currentCampaign.metadata.send_date && isScheduledForFuture() && (
+          <div className="mt-2 text-blue-600 font-medium">
+            💡 Tip: Click "Update Campaign" above to schedule this campaign for{" "}
+            {new Date(currentCampaign.metadata.send_date).toLocaleDateString()}
+          </div>
+        )}
       </div>
 
       {/* Enhanced Confirmation/Success Modal */}

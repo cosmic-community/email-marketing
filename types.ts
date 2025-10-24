@@ -62,7 +62,7 @@ export interface UploadJob extends CosmicObject {
     errors?: string[]; // Detailed error messages
     duplicates?: string[]; // Duplicate email addresses
     message?: string; // Current processing status message
-    
+
     // NEW FIELDS FOR CHUNKED PROCESSING:
     current_batch_index?: number; // Track which batch we're currently processing
     batch_size?: number; // Size of each processing batch
@@ -200,7 +200,7 @@ export interface MarketingCampaign extends CosmicObject {
     campaign_content?: CampaignContent; // NEW: stores decoupled content
     template?: string | EmailTemplate; // DEPRECATED: for backward compatibility
     target_lists?: EmailList[] | string[]; // NEW: target lists for sending
-    target_contacts?: string[]; // Store contact IDs as the primary field
+    target_contacts?: EmailContact[] | string[]; // Can be populated objects (depth=1) or IDs
     target_tags?: string[];
     status: {
       key: string;
@@ -211,11 +211,11 @@ export interface MarketingCampaign extends CosmicObject {
     stats?: CampaignStats;
     sending_progress?: CampaignProgress;
     public_sharing_enabled?: boolean; // NEW: controls public link sharing
-    
+
     // NEW: Rate limiting fields
     rate_limit_hit_at?: string; // Timestamp when rate limit was hit
     retry_after?: number; // Seconds to wait before retrying
-    
+
     // Backward compatibility fields
     subject?: string; // DEPRECATED: use campaign_content.subject
     content?: string; // DEPRECATED: use campaign_content.content
@@ -230,7 +230,7 @@ export interface EmailCampaign extends CosmicObject {
     campaign_content?: CampaignContent; // NEW: stores decoupled content
     template?: string | EmailTemplate; // DEPRECATED: for backward compatibility
     target_lists?: EmailList[] | string[];
-    target_contacts?: string[];
+    target_contacts?: EmailContact[] | string[]; // Can be populated objects (depth=1) or IDs
     target_tags?: string[];
     status: {
       key: string;
@@ -241,11 +241,11 @@ export interface EmailCampaign extends CosmicObject {
     stats?: CampaignStats;
     sending_progress?: CampaignProgress;
     public_sharing_enabled?: boolean; // NEW: controls public link sharing
-    
+
     // NEW: Rate limiting fields
     rate_limit_hit_at?: string;
     retry_after?: number;
-    
+
     // Backward compatibility fields
     subject?: string; // DEPRECATED: use campaign_content.subject
     content?: string; // DEPRECATED: use campaign_content.content

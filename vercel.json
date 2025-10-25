@@ -5,8 +5,9 @@
       "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/cron/send-campaigns",
-      "schedule": "*/2 * * * *"
+      "path": "/api/cron/check-scheduled-campaigns",
+      "schedule": "*/2 * * * *",
+      "comment": "Checks for scheduled campaigns and triggers Inngest (Inngest also checks every 5 min as backup)"
     },
     {
       "path": "/api/cron/sync-campaign-stats",

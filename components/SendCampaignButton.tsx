@@ -100,12 +100,16 @@ export default function SendCampaignButton({
     setIsLoading(true);
 
     try {
-      const response = await fetch(`/api/campaigns/${campaign.id}/send`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
+      // Use Inngest endpoint for background processing (no timeouts!)
+      const response = await fetch(
+        `/api/campaigns/${campaign.id}/send-inngest`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -411,9 +415,10 @@ export default function SendCampaignButton({
 
       <div className="text-xs text-gray-500 text-center pt-2 border-t border-gray-200">
         <div>
-          Emails will be sent in batches via background processing for optimal
-          delivery.
+          ⚡ Campaign will be sent via Inngest background processing (no
+          timeouts).
         </div>
+        <div className="mt-1">Track progress in real-time on this page.</div>
         {currentCampaign.metadata.send_date && isScheduledForFuture() && (
           <div className="mt-2 text-blue-600 font-medium">
             💡 Tip: Click "Update Campaign" above to schedule this campaign for{" "}

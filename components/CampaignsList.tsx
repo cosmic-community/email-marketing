@@ -14,9 +14,10 @@ import { Eye, Edit, Calendar, Mail, TrendingUp, Copy, MoreVertical, Clock } from
 
 interface CampaignsListProps {
   campaigns: MarketingCampaign[]
+  onCampaignDuplicated?: () => void // Changed: Added callback for refresh
 }
 
-export default function CampaignsList({ campaigns }: CampaignsListProps) {
+export default function CampaignsList({ campaigns, onCampaignDuplicated }: CampaignsListProps) {
   const router = useRouter()
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
   const [showDuplicateConfirm, setShowDuplicateConfirm] = useState<MarketingCampaign | null>(null)
@@ -45,13 +46,18 @@ export default function CampaignsList({ campaigns }: CampaignsListProps) {
       const result = await response.json()
       setSuccess(`Campaign "${campaign.metadata?.name}" duplicated successfully!`)
       
+      // Changed: Call the callback first for immediate UI update
+      if (onCampaignDuplicated) {
+        onCampaignDuplicated()
+      }
+      
       // Force refresh to get the latest data immediately
       router.refresh()
       
-      // Additional refresh after a delay to ensure the new campaign appears
+      // Additional refresh after a delay to ensure consistency
       setTimeout(() => {
         router.refresh()
-      }, 1500)
+      }, 1000) // Changed: Reduced delay from 1500ms to 1000ms
 
     } catch (error: any) {
       setError(error.message || 'Failed to duplicate campaign')

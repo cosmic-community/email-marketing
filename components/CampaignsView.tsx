@@ -24,6 +24,8 @@ export default function CampaignsView({
   const [campaigns, setCampaigns] =
     useState<MarketingCampaign[]>(initialCampaigns);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false); // Changed: Added refresh state
+  const [total, setTotal] = useState(totalCampaigns); // Changed: Track total count
   const [hasMore, setHasMore] = useState(
     initialCampaigns.length < totalCampaigns
   );
@@ -44,6 +46,7 @@ export default function CampaignsView({
       if (result.success) {
         const newCampaigns = [...campaigns, ...result.data];
         setCampaigns(newCampaigns);
+        setTotal(result.total);
         setHasMore(newCampaigns.length < result.total);
       }
     } catch (error) {
@@ -54,12 +57,50 @@ export default function CampaignsView({
     }
   };
 
+  // Changed: New function to refresh campaigns after duplication
+  const handleCampaignDuplicated = async () => {
+    setIsRefreshing(true);
+    try {
+      // Fetch fresh data with current pagination
+      const response = await fetch(
+        `/api/campaigns?limit=${campaigns.length}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to refresh campaigns");
+      }
+
+      const result = await response.json();
+
+      if (result.success) {
+        setCampaigns(result.data);
+        setTotal(result.total);
+        setHasMore(result.data.length < result.total);
+      }
+    } catch (error) {
+      console.error("Error refreshing campaigns:", JSON.stringify(error));
+      // Don't show an alert here as it would be intrusive after successful duplication
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* View Tabs */}
       <div className="flex justify-between items-center">
         <div className="text-sm text-gray-600">
-          Showing {campaigns.length} of {totalCampaigns} campaigns
+          {/* Changed: Show refreshing state */}
+          {isRefreshing ? (
+            <div className="flex items-center space-x-2">
+              <LoadingSpinner size="sm" />
+              <span>Refreshing campaigns...</span>
+            </div>
+          ) : (
+            <span>
+              Showing {campaigns.length} of {total} campaigns
+            </span>
+          )}
         </div>
         <Tabs
           value={view}
@@ -81,7 +122,10 @@ export default function CampaignsView({
       {/* View Content */}
       {view === "list" ? (
         <>
-          <CampaignsList campaigns={campaigns} />
+          <CampaignsList 
+            campaigns={campaigns} 
+            onCampaignDuplicated={handleCampaignDuplicated} // Changed: Pass callback
+          />
 
           {/* Load More Button */}
           {hasMore && (
@@ -100,7 +144,7 @@ export default function CampaignsView({
                   </>
                 ) : (
                   `Load More Campaigns (${
-                    totalCampaigns - campaigns.length
+                    total - campaigns.length
                   } remaining)`
                 )}
               </Button>

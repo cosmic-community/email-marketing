@@ -3102,16 +3102,34 @@ export async function getCampaignTargetContacts(
       campaign.metadata.target_contacts &&
       campaign.metadata.target_contacts.length > 0
     ) {
+      console.log(
+        `📋 Processing ${campaign.metadata.target_contacts.length} individual target contacts...`
+      );
+
       // CRITICAL FIX: Validate that each contact entry is valid before processing
       for (const contactRef of campaign.metadata.target_contacts) {
         try {
           // Extract contact ID - handle both string IDs and contact objects
           const contactId =
-            typeof contactRef === "string" ? contactRef : contactRef;
+            typeof contactRef === "string"
+              ? contactRef
+              : (contactRef as any).id;
+
+          console.log(`🔍 Processing contact reference:`, {
+            type: typeof contactRef,
+            contactId,
+            isString: typeof contactId === "string",
+          });
 
           // CRITICAL FIX: Ensure contactId is a string before passing to getEmailContact
           if (typeof contactId === "string") {
             const contact = await getEmailContact(contactId);
+            console.log(`📧 Fetched contact ${contactId}:`, {
+              found: !!contact,
+              status: contact?.metadata.status?.value,
+              alreadyAdded: addedContactIds.has(contact?.id || ""),
+            });
+
             if (
               contact &&
               contact.metadata.status.value === "Active" &&
@@ -3119,13 +3137,22 @@ export async function getCampaignTargetContacts(
             ) {
               allContacts.push(contact);
               addedContactIds.add(contact.id);
+              console.log(`✅ Added contact: ${contact.metadata.email}`);
+            } else {
+              console.log(`⏭️  Skipped contact ${contactId}:`, {
+                exists: !!contact,
+                status: contact?.metadata.status?.value,
+                duplicate: contact ? addedContactIds.has(contact.id) : false,
+              });
             }
+          } else {
+            console.error(`❌ Invalid contactId type:`, typeof contactId);
           }
 
           // Small delay between contact validation to prevent API overload
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
-          console.error(`Error fetching contact ${contactRef}:`, error);
+          console.error(`❌ Error fetching contact:`, contactRef, error);
         }
       }
     }

@@ -252,90 +252,87 @@ export default function CampaignPageClient({
           <EditCampaignContentForm campaign={campaign} />
         </div>
 
-        {/* Unsubscribed Contacts Section - Show for sending and sent campaigns with unsubscribed contacts */}
-        {(status === "Sending" || status === "Sent") &&
-          unsubscribesData.length > 0 && (
-            <div className="mt-8">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <UserMinus className="h-5 w-5 text-red-500" />
-                    <span>Unsubscribed Contacts</span>
-                    <span className="text-sm font-normal text-gray-500">
-                      (
-                      {unsubscribesHasMore
-                        ? `${formatNumber(
-                            unsubscribesData.length
-                          )} of ${formatNumber(unsubscribesTotalCount)}`
-                        : formatNumber(unsubscribesTotalCount)}
-                      )
-                    </span>
-                  </CardTitle>
-                  <p className="text-sm text-gray-600">
-                    Contacts who unsubscribed from this campaign
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {unsubscribesData.map((contact) => (
-                      <div
-                        key={contact.id}
-                        className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border"
-                      >
-                        <div className="flex items-center space-x-3">
-                          <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
-                            <UserMinus className="h-4 w-4 text-red-600" />
-                          </div>
-                          <div>
-                            <div className="font-medium text-gray-900">
-                              {contact.metadata.first_name}{" "}
-                              {contact.metadata.last_name}
-                            </div>
-                            <div className="flex items-center space-x-1 text-sm text-gray-500">
-                              <Mail className="h-3 w-3" />
-                              <span>{contact.metadata.email}</span>
-                            </div>
-                          </div>
+        {/* Unsubscribed Contacts Section - Show when there are unsubscribed contacts */}
+        {unsubscribesData.length > 0 && (
+          <div className="mt-8">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <UserMinus className="h-5 w-5 text-red-500" />
+                  <span>Unsubscribed Contacts</span>
+                  <span className="text-sm font-normal text-gray-500">
+                    (
+                    {unsubscribesHasMore
+                      ? `${formatNumber(
+                          unsubscribesData.length
+                        )} of ${formatNumber(unsubscribesTotalCount)}`
+                      : formatNumber(unsubscribesTotalCount)}
+                    )
+                  </span>
+                </CardTitle>
+                <p className="text-sm text-gray-600">
+                  Contacts who unsubscribed from this campaign
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {unsubscribesData.map((contact) => (
+                    <div
+                      key={contact.id}
+                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border"
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
+                          <UserMinus className="h-4 w-4 text-red-600" />
                         </div>
-                        <div className="text-right">
-                          <div className="text-xs text-gray-500">
-                            Unsubscribed
+                        <div>
+                          <div className="font-medium text-gray-900">
+                            {contact.metadata.first_name}{" "}
+                            {contact.metadata.last_name}
                           </div>
-                          {(contact.metadata as any).unsubscribed_date && (
-                            <div className="text-xs text-gray-400">
-                              <TimeAgo
-                                date={
-                                  (contact.metadata as any).unsubscribed_date
-                                }
-                              />
-                            </div>
-                          )}
+                          <div className="flex items-center space-x-1 text-sm text-gray-500">
+                            <Mail className="h-3 w-3" />
+                            <span>{contact.metadata.email}</span>
+                          </div>
                         </div>
                       </div>
-                    ))}
-                  </div>
-
-                  {unsubscribesHasMore && (
-                    <div className="mt-4 text-center">
-                      <Button
-                        variant="outline"
-                        onClick={loadMoreUnsubscribes}
-                        disabled={isLoadingUnsubscribes}
-                        className="w-full"
-                      >
-                        {isLoadingUnsubscribes
-                          ? "Loading..."
-                          : "Load More Unsubscribes"}
-                      </Button>
+                      <div className="text-right">
+                        <div className="text-xs text-gray-500">
+                          Unsubscribed
+                        </div>
+                        {(contact.metadata as any).unsubscribed_date && (
+                          <div className="text-xs text-gray-400">
+                            <TimeAgo
+                              date={(contact.metadata as any).unsubscribed_date}
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          )}
+                  ))}
+                </div>
+
+                {unsubscribesHasMore && (
+                  <div className="mt-4 text-center">
+                    <Button
+                      variant="outline"
+                      onClick={loadMoreUnsubscribes}
+                      disabled={isLoadingUnsubscribes}
+                      className="w-full"
+                    >
+                      {isLoadingUnsubscribes
+                        ? "Loading..."
+                        : "Load More Unsubscribes"}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Click Analytics Section - Show aggregated stats */}
-        {(status === "Sending" || status === "Sent") && clickStats && (
+        {clickStats && (
           <div className="mt-8">
             <Card>
               <CardHeader>
@@ -459,120 +456,119 @@ export default function CampaignPageClient({
           </div>
         )}
 
-        {/* Click Events Section - Show for sending and sent campaigns with click events */}
-        {(status === "Sending" || status === "Sent") &&
-          clicksData.length > 0 && (
-            <div className="mt-8">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <MousePointerClick className="h-5 w-5 text-purple-500" />
-                    <span>Click Events</span>
-                    <span className="text-sm font-normal text-gray-500">
-                      (
-                      {clicksHasMore
-                        ? `${formatNumber(clicksData.length)} of ${formatNumber(
-                            clicksTotalCount
-                          )}`
-                        : formatNumber(clicksTotalCount)}
-                      )
-                    </span>
-                  </CardTitle>
-                  <p className="text-sm text-gray-600">
-                    Detailed click tracking for this campaign
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="text-left py-3 px-3 font-medium text-gray-700">
-                            Contact
-                          </th>
-                          <th className="text-left py-3 px-3 font-medium text-gray-700">
-                            URL
-                          </th>
-                          <th className="text-left py-3 px-3 font-medium text-gray-700">
-                            Timestamp
-                          </th>
+        {/* Click Events Section - Show when there are click events */}
+        {clicksData.length > 0 && (
+          <div className="mt-8">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <MousePointerClick className="h-5 w-5 text-purple-500" />
+                  <span>Click Events</span>
+                  <span className="text-sm font-normal text-gray-500">
+                    (
+                    {clicksHasMore
+                      ? `${formatNumber(clicksData.length)} of ${formatNumber(
+                          clicksTotalCount
+                        )}`
+                      : formatNumber(clicksTotalCount)}
+                    )
+                  </span>
+                </CardTitle>
+                <p className="text-sm text-gray-600">
+                  Detailed click tracking for this campaign
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-3 px-3 font-medium text-gray-700">
+                          Contact
+                        </th>
+                        <th className="text-left py-3 px-3 font-medium text-gray-700">
+                          URL
+                        </th>
+                        <th className="text-left py-3 px-3 font-medium text-gray-700">
+                          Timestamp
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {clicksData.map((event) => (
+                        <tr
+                          key={event.id}
+                          className="border-b hover:bg-gray-50"
+                        >
+                          <td className="py-3 px-3">
+                            <div className="flex items-center space-x-2">
+                              <div className="w-6 h-6 bg-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <MousePointerClick className="h-3 w-3 text-purple-600" />
+                              </div>
+                              <div className="min-w-0">
+                                {event.contact_name || event.contact_email ? (
+                                  <>
+                                    {event.contact_name && (
+                                      <div className="text-xs font-medium text-gray-900 truncate">
+                                        {event.contact_name}
+                                      </div>
+                                    )}
+                                    {event.contact_email && (
+                                      <div
+                                        className="text-xs text-gray-600 truncate"
+                                        title={event.contact_email}
+                                      >
+                                        {event.contact_email}
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <div className="text-xs text-gray-400">
+                                    Unknown
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="flex items-center space-x-1 min-w-0">
+                              <ExternalLinkIcon className="h-3 w-3 text-gray-400 flex-shrink-0" />
+                              <a
+                                href={event.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 hover:text-blue-800 hover:underline truncate max-w-md"
+                                title={event.url}
+                              >
+                                {event.url}
+                              </a>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-xs text-gray-500 whitespace-nowrap">
+                            <TimeAgo date={event.timestamp} />
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {clicksData.map((event) => (
-                          <tr
-                            key={event.id}
-                            className="border-b hover:bg-gray-50"
-                          >
-                            <td className="py-3 px-3">
-                              <div className="flex items-center space-x-2">
-                                <div className="w-6 h-6 bg-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
-                                  <MousePointerClick className="h-3 w-3 text-purple-600" />
-                                </div>
-                                <div className="min-w-0">
-                                  {event.contact_name || event.contact_email ? (
-                                    <>
-                                      {event.contact_name && (
-                                        <div className="text-xs font-medium text-gray-900 truncate">
-                                          {event.contact_name}
-                                        </div>
-                                      )}
-                                      {event.contact_email && (
-                                        <div
-                                          className="text-xs text-gray-600 truncate"
-                                          title={event.contact_email}
-                                        >
-                                          {event.contact_email}
-                                        </div>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <div className="text-xs text-gray-400">
-                                      Unknown
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-3 px-3">
-                              <div className="flex items-center space-x-1 min-w-0">
-                                <ExternalLinkIcon className="h-3 w-3 text-gray-400 flex-shrink-0" />
-                                <a
-                                  href={event.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs text-blue-600 hover:text-blue-800 hover:underline truncate max-w-md"
-                                  title={event.url}
-                                >
-                                  {event.url}
-                                </a>
-                              </div>
-                            </td>
-                            <td className="py-3 px-3 text-xs text-gray-500 whitespace-nowrap">
-                              <TimeAgo date={event.timestamp} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-                  {clicksHasMore && (
-                    <div className="mt-4 text-center">
-                      <Button
-                        variant="outline"
-                        onClick={loadMoreClicks}
-                        disabled={isLoadingClicks}
-                        className="w-full"
-                      >
-                        {isLoadingClicks ? "Loading..." : "Load More Clicks"}
-                      </Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          )}
+                {clicksHasMore && (
+                  <div className="mt-4 text-center">
+                    <Button
+                      variant="outline"
+                      onClick={loadMoreClicks}
+                      disabled={isLoadingClicks}
+                      className="w-full"
+                    >
+                      {isLoadingClicks ? "Loading..." : "Load More Clicks"}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Danger Zone - Delete Campaign */}
         <div className="border-t pt-8 mt-8">
@@ -629,7 +625,7 @@ export default function CampaignPageClient({
         )}
 
         {/* Campaign Stats */}
-        {(status === "Sent" || status === "Sending") && (
+        {stats && (
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">

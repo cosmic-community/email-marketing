@@ -41,7 +41,7 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
       notFound();
     }
 
-    // Fetch unsubscribed contacts and click events if the campaign is sending or sent
+    // Fetch unsubscribed contacts and click events if the campaign is sending, sent, or paused
     let unsubscribedContacts: EmailContact[] = [];
     let unsubscribesTotal = 0;
     let clickEvents: any[] = [];
@@ -49,7 +49,7 @@ export default async function CampaignPage({ params }: CampaignPageProps) {
     let clickStats: any = null;
     const status = campaign.metadata.status?.value;
 
-    if (status === "Sending" || status === "Sent") {
+    if (status === "Sending" || status === "Sent" || status === "Paused") {
       try {
         const result = await getUnsubscribedContactsByCampaign(id, {
           limit: 10,

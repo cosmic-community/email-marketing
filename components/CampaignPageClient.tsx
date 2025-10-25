@@ -252,8 +252,8 @@ export default function CampaignPageClient({
           <EditCampaignContentForm campaign={campaign} />
         </div>
 
-        {/* Unsubscribed Contacts Section - Show for sending and sent campaigns with unsubscribed contacts */}
-        {(status === "Sending" || status === "Sent") &&
+        {/* Unsubscribed Contacts Section - Show for sending, sent, and paused campaigns with unsubscribed contacts */}
+        {(status === "Sending" || status === "Sent" || status === "Paused") &&
           unsubscribesData.length > 0 && (
             <div className="mt-8">
               <Card>
@@ -335,132 +335,133 @@ export default function CampaignPageClient({
           )}
 
         {/* Click Analytics Section - Show aggregated stats */}
-        {(status === "Sending" || status === "Sent") && clickStats && (
-          <div className="mt-8">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <BarChart3 className="h-5 w-5 text-blue-500" />
-                  <span>Click Analytics</span>
-                </CardTitle>
-                <p className="text-sm text-gray-600">
-                  Aggregated click statistics and link performance
-                </p>
-              </CardHeader>
-              <CardContent>
-                {clickStats.totalClicks === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    <BarChart3 className="mx-auto h-12 w-12 mb-3 text-gray-300" />
-                    <p className="text-sm">No clicks yet</p>
-                    <p className="text-xs mt-1">
-                      Click statistics will appear once recipients click links
-                      in the email
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    {/* Summary Stats */}
-                    <div className="grid grid-cols-2 gap-4 mb-6">
-                      <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <UsersIcon className="h-5 w-5 text-blue-600" />
-                          <span className="text-sm font-medium text-blue-900">
-                            Unique Clickers
-                          </span>
-                        </div>
-                        <div className="text-3xl font-bold text-blue-900">
-                          {formatNumber(clickStats.uniqueClickers)}
-                        </div>
-                        <div className="text-xs text-blue-700 mt-1">
-                          {stats?.sent
-                            ? `${Math.round(
-                                (clickStats.uniqueClickers / stats.sent) * 100
-                              )}% of recipients`
-                            : "contacts clicked at least once"}
-                        </div>
-                      </div>
-                      <div className="p-4 bg-purple-50 rounded-lg border border-purple-200">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <MousePointerClick className="h-5 w-5 text-purple-600" />
-                          <span className="text-sm font-medium text-purple-900">
-                            Total Clicks
-                          </span>
-                        </div>
-                        <div className="text-3xl font-bold text-purple-900">
-                          {formatNumber(clickStats.totalClicks)}
-                        </div>
-                        <div className="text-xs text-purple-700 mt-1">
-                          across {formatNumber(clickStats.linkStats.length)}{" "}
-                          unique links
-                        </div>
-                      </div>
+        {(status === "Sending" || status === "Sent" || status === "Paused") &&
+          clickStats && (
+            <div className="mt-8">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <BarChart3 className="h-5 w-5 text-blue-500" />
+                    <span>Click Analytics</span>
+                  </CardTitle>
+                  <p className="text-sm text-gray-600">
+                    Aggregated click statistics and link performance
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {clickStats.totalClicks === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      <BarChart3 className="mx-auto h-12 w-12 mb-3 text-gray-300" />
+                      <p className="text-sm">No clicks yet</p>
+                      <p className="text-xs mt-1">
+                        Click statistics will appear once recipients click links
+                        in the email
+                      </p>
                     </div>
+                  ) : (
+                    <>
+                      {/* Summary Stats */}
+                      <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <UsersIcon className="h-5 w-5 text-blue-600" />
+                            <span className="text-sm font-medium text-blue-900">
+                              Unique Clickers
+                            </span>
+                          </div>
+                          <div className="text-3xl font-bold text-blue-900">
+                            {formatNumber(clickStats.uniqueClickers)}
+                          </div>
+                          <div className="text-xs text-blue-700 mt-1">
+                            {stats?.sent
+                              ? `${Math.round(
+                                  (clickStats.uniqueClickers / stats.sent) * 100
+                                )}% of recipients`
+                              : "contacts clicked at least once"}
+                          </div>
+                        </div>
+                        <div className="p-4 bg-purple-50 rounded-lg border border-purple-200">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <MousePointerClick className="h-5 w-5 text-purple-600" />
+                            <span className="text-sm font-medium text-purple-900">
+                              Total Clicks
+                            </span>
+                          </div>
+                          <div className="text-3xl font-bold text-purple-900">
+                            {formatNumber(clickStats.totalClicks)}
+                          </div>
+                          <div className="text-xs text-purple-700 mt-1">
+                            across {formatNumber(clickStats.linkStats.length)}{" "}
+                            unique links
+                          </div>
+                        </div>
+                      </div>
 
-                    {/* Link Performance Table */}
-                    <div>
-                      <h4 className="text-sm font-semibold text-gray-700 mb-3">
-                        Link Performance
-                      </h4>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b bg-gray-50">
-                              <th className="text-left py-3 px-3 font-medium text-gray-700">
-                                URL
-                              </th>
-                              <th className="text-center py-3 px-3 font-medium text-gray-700">
-                                Total Clicks
-                              </th>
-                              <th className="text-center py-3 px-3 font-medium text-gray-700">
-                                Unique Clickers
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {clickStats.linkStats.map((link, index) => (
-                              <tr
-                                key={index}
-                                className="border-b hover:bg-gray-50"
-                              >
-                                <td className="py-3 px-3">
-                                  <div className="flex items-center space-x-1 min-w-0">
-                                    <ExternalLinkIcon className="h-3 w-3 text-gray-400 flex-shrink-0" />
-                                    <a
-                                      href={link.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline truncate max-w-md"
-                                      title={link.url}
-                                    >
-                                      {link.url}
-                                    </a>
-                                  </div>
-                                </td>
-                                <td className="py-3 px-3 text-center">
-                                  <span className="inline-flex items-center justify-center px-2 py-1 text-xs font-semibold text-purple-800 bg-purple-100 rounded-full">
-                                    {formatNumber(link.clickCount)}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-3 text-center">
-                                  <span className="inline-flex items-center justify-center px-2 py-1 text-xs font-semibold text-blue-800 bg-blue-100 rounded-full">
-                                    {formatNumber(link.uniqueClickers)}
-                                  </span>
-                                </td>
+                      {/* Link Performance Table */}
+                      <div>
+                        <h4 className="text-sm font-semibold text-gray-700 mb-3">
+                          Link Performance
+                        </h4>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b bg-gray-50">
+                                <th className="text-left py-3 px-3 font-medium text-gray-700">
+                                  URL
+                                </th>
+                                <th className="text-center py-3 px-3 font-medium text-gray-700">
+                                  Total Clicks
+                                </th>
+                                <th className="text-center py-3 px-3 font-medium text-gray-700">
+                                  Unique Clickers
+                                </th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {clickStats.linkStats.map((link, index) => (
+                                <tr
+                                  key={index}
+                                  className="border-b hover:bg-gray-50"
+                                >
+                                  <td className="py-3 px-3">
+                                    <div className="flex items-center space-x-1 min-w-0">
+                                      <ExternalLinkIcon className="h-3 w-3 text-gray-400 flex-shrink-0" />
+                                      <a
+                                        href={link.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs text-blue-600 hover:text-blue-800 hover:underline truncate max-w-md"
+                                        title={link.url}
+                                      >
+                                        {link.url}
+                                      </a>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    <span className="inline-flex items-center justify-center px-2 py-1 text-xs font-semibold text-purple-800 bg-purple-100 rounded-full">
+                                      {formatNumber(link.clickCount)}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    <span className="inline-flex items-center justify-center px-2 py-1 text-xs font-semibold text-blue-800 bg-blue-100 rounded-full">
+                                      {formatNumber(link.uniqueClickers)}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
-        {/* Click Events Section - Show for sending and sent campaigns with click events */}
-        {(status === "Sending" || status === "Sent") &&
+        {/* Click Events Section - Show for sending, sent, and paused campaigns with click events */}
+        {(status === "Sending" || status === "Sent" || status === "Paused") &&
           clicksData.length > 0 && (
             <div className="mt-8">
               <Card>
@@ -629,7 +630,7 @@ export default function CampaignPageClient({
         )}
 
         {/* Campaign Stats */}
-        {(status === "Sent" || status === "Sending") && (
+        {(status === "Sent" || status === "Sending" || status === "Paused") && (
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">

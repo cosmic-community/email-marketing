@@ -5,7 +5,7 @@
       "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/cron/send-campaigns",
+      "path": "/api/cron/check-scheduled-campaigns",
       "schedule": "*/2 * * * *"
     },
     {

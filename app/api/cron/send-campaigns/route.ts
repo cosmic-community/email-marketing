@@ -28,6 +28,7 @@ const DELAY_BETWEEN_BATCHES = 300; // Optimized - reduced from 400ms
 const MAX_EXECUTION_TIME = 55000; // 55 seconds (safe margin before 60s timeout)
 const CAMPAIGN_PROCESSING_TIMEOUT = 50000; // 50 seconds max per campaign
 const DB_OPERATION_TIMEOUT = 10000; // 10 seconds max per DB operation
+const DB_CONTACT_FETCH_TIMEOUT = 15000; // 15 seconds for fetching large contact lists (reduced from 30s due to minimal field optimization)
 
 // CAPACITY METRICS (with 2-minute cron interval):
 // - Per run: ~2,000 emails (50 × 40 batches)
@@ -637,7 +638,7 @@ async function processCampaignBatch(
         maxContactsPerList: 15000, // Changed: Increased from 2500 to 15000 for better large campaign support
         totalMaxContacts: 100000, // Changed: Removed artificial 10K limit - increased to 100K for large campaigns
       }),
-    DB_OPERATION_TIMEOUT,
+    DB_CONTACT_FETCH_TIMEOUT, // FIXED: Use longer timeout for large contact fetching
     `fetch target contacts for campaign ${campaign.id}`
   );
 
@@ -650,13 +651,10 @@ async function processCampaignBatch(
     `🔍 [FILTER] Filtering unsent contacts from ${allContacts.length} total contacts...`
   );
 
+  // OPTIMIZATION: Pass contacts directly (not just IDs) to avoid re-fetching emails
   const unsentContactIds = await withDatabaseTimeout(
-    () =>
-      filterUnsentContacts(
-        campaign.id,
-        allContacts.map((c) => c.id)
-      ),
-    DB_OPERATION_TIMEOUT,
+    () => filterUnsentContacts(campaign.id, allContacts),
+    DB_CONTACT_FETCH_TIMEOUT, // FIXED: Use longer timeout for large contact filtering
     `filter unsent contacts for campaign ${campaign.id}`
   );
 

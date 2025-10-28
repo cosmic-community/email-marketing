@@ -40,6 +40,28 @@ export const sendCampaignFunction = inngest.createFunction(
     };
 
     console.log(`📧 [INNGEST] Starting campaign send: ${campaignId}`);
+    console.log(
+      `📊 [INNGEST] Campaign current status: ${campaign.metadata.status?.value}`
+    );
+
+    // Safety net: Ensure campaign status is "Sending" when function starts
+    // This catches cases where the API endpoint status update failed
+    if (campaign.metadata.status?.value !== "Sending") {
+      await step.run("ensure-sending-status", async () => {
+        console.log(`⚠️  Campaign status is not "Sending", updating now...`);
+        await updateCampaignStatus(campaignId, "Sending", {
+          sent: campaign.metadata.stats?.sent || 0,
+          delivered: campaign.metadata.stats?.delivered || 0,
+          opened: campaign.metadata.stats?.opened || 0,
+          clicked: campaign.metadata.stats?.clicked || 0,
+          bounced: campaign.metadata.stats?.bounced || 0,
+          unsubscribed: campaign.metadata.stats?.unsubscribed || 0,
+          open_rate: campaign.metadata.stats?.open_rate || "0%",
+          click_rate: campaign.metadata.stats?.click_rate || "0%",
+        });
+        console.log(`✅ Status updated to "Sending" from Inngest function`);
+      });
+    }
 
     // Step 1: Get settings
     const settings = await step.run("get-settings", async () => {

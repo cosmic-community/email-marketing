@@ -36,23 +36,37 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     // Update campaign status to "Sending"
-    await updateCampaignStatus(campaignId, "Sending", {
-      sent: 0,
-      delivered: 0,
-      opened: 0,
-      clicked: 0,
-      bounced: 0,
-      unsubscribed: 0,
-      open_rate: "0%",
-      click_rate: "0%",
-    });
+    console.log(
+      `📝 [STATUS UPDATE] Updating campaign status from "${currentStatus}" to "Sending"...`
+    );
+    try {
+      await updateCampaignStatus(campaignId, "Sending", {
+        sent: 0,
+        delivered: 0,
+        opened: 0,
+        clicked: 0,
+        bounced: 0,
+        unsubscribed: 0,
+        open_rate: "0%",
+        click_rate: "0%",
+      });
+      console.log(
+        `✅ [STATUS UPDATE] Campaign status successfully updated to "Sending"`
+      );
+    } catch (statusError) {
+      console.error(`❌ [STATUS UPDATE] Failed to update status:`, statusError);
+      // Continue anyway - the send can still work even if status update fails
+    }
+
+    // Re-fetch campaign to get updated status
+    const updatedCampaign = await getMarketingCampaign(campaignId);
 
     // Trigger the Inngest background function
     await inngest.send({
       name: "campaign/send",
       data: {
         campaignId,
-        campaign,
+        campaign: updatedCampaign || campaign, // Use updated campaign if available
       },
     });
 

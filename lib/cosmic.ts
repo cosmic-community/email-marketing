@@ -2789,6 +2789,10 @@ export async function updateCampaignStatus(
   stats?: CampaignStats
 ): Promise<void> {
   try {
+    console.log(
+      `🔄 [updateCampaignStatus] Updating campaign ${id} to status: ${status}`
+    );
+
     const metadataUpdates: any = {
       status: {
         key: status.toLowerCase(),
@@ -2798,13 +2802,26 @@ export async function updateCampaignStatus(
 
     if (stats) {
       metadataUpdates.stats = stats;
+      console.log(`📊 [updateCampaignStatus] Including stats:`, stats);
     }
 
-    await cosmic.objects.updateOne(id, {
+    console.log(`📤 [updateCampaignStatus] Sending update to Cosmic...`);
+    const result = await cosmic.objects.updateOne(id, {
       metadata: metadataUpdates,
     });
+
+    console.log(
+      `✅ [updateCampaignStatus] Successfully updated campaign status to ${status}`
+    );
+    console.log(`📋 [updateCampaignStatus] Updated object:`, {
+      id: result.object.id,
+      status: result.object.metadata?.status,
+    });
   } catch (error) {
-    console.error(`Error updating campaign status for ${id}:`, error);
+    console.error(
+      `❌ [updateCampaignStatus] Error updating campaign status for ${id}:`,
+      error
+    );
     throw new Error("Failed to update campaign status");
   }
 }

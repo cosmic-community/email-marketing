@@ -14,11 +14,41 @@ import { sendEmail, ResendRateLimitError } from "@/lib/resend";
 import { createUnsubscribeUrl } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
-// Rate limiting configuration - OPTIMIZED for parallel sending
-const EMAILS_PER_SECOND = 9.8; // 98% of 10/sec limit (confirmed with user)
-const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~102ms per email
+// Rate limiting configuration - SAFE parallel sending with concurrency control
+const EMAILS_PER_SECOND = 9; // 90% of 10/sec limit (safer margin)
+const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~111ms per email
 const BATCH_SIZE = 50;
-const DELAY_BETWEEN_BATCHES = 100; // Reduced from 300ms - less overhead needed
+const PARALLEL_LIMIT = 10; // Process 10 emails concurrently (prevents rate limit burst)
+const DELAY_BETWEEN_BATCHES = 200; // Slightly increased for safety
+
+// Helper function to process promises with concurrency limit
+async function processWithConcurrencyLimit<T, R>(
+  items: T[],
+  limit: number,
+  delayMs: number,
+  processor: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+
+  for (let i = 0; i < items.length; i += limit) {
+    const batch = items.slice(i, i + limit);
+
+    // Process batch in parallel
+    const batchPromises = batch.map((item, batchIndex) =>
+      processor(item, i + batchIndex)
+    );
+
+    const batchResults = await Promise.all(batchPromises);
+    results.push(...batchResults);
+
+    // Add delay between concurrent batches to respect rate limit
+    if (i + limit < items.length) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs * limit));
+    }
+  }
+
+  return results;
+}
 
 // Inngest background function - NO TIMEOUT LIMITS! 🎉
 export const sendCampaignFunction = inngest.createFunction(
@@ -175,148 +205,146 @@ export const sendCampaignFunction = inngest.createFunction(
           return 0;
         }
 
-        // OPTIMIZED: Send emails in parallel with staggered starts (respects rate limit)
-        // All 50 emails process simultaneously, but released to Resend API at 9.8/sec
+        // OPTIMIZED: Send emails with controlled concurrency (respects rate limit)
+        // Process PARALLEL_LIMIT emails at a time with proper delays between batches
         console.log(
-          `🚀 Sending ${reservedContacts.length} emails in parallel (staggered at ${EMAILS_PER_SECOND}/sec)...`
+          `🚀 Sending ${reservedContacts.length} emails with concurrency limit of ${PARALLEL_LIMIT} (${EMAILS_PER_SECOND}/sec)...`
         );
 
-        const sendPromises = reservedContacts.map(async (contact, index) => {
-          // Stagger sends: each email starts MIN_DELAY_MS after the previous one
-          // This ensures we stay at exactly 9.8 emails/second
-          await new Promise((resolve) =>
-            setTimeout(resolve, index * MIN_DELAY_MS)
-          );
+        const results = await processWithConcurrencyLimit(
+          reservedContacts,
+          PARALLEL_LIMIT,
+          MIN_DELAY_MS,
+          async (contact, index) => {
+            const pendingRecordId = pendingRecordIds.get(contact.id);
 
-          const pendingRecordId = pendingRecordIds.get(contact.id);
+            try {
+              // Get campaign content
+              const emailContent =
+                campaign.metadata.campaign_content?.content || "";
+              const emailSubject =
+                campaign.metadata.campaign_content?.subject || "";
 
-          try {
-            // Get campaign content
-            const emailContent =
-              campaign.metadata.campaign_content?.content || "";
-            const emailSubject =
-              campaign.metadata.campaign_content?.subject || "";
+              // Personalize content
+              let personalizedContent = emailContent.replace(
+                /\{\{first_name\}\}/g,
+                contact.metadata.first_name || "there"
+              );
+              let personalizedSubject = emailSubject.replace(
+                /\{\{first_name\}\}/g,
+                contact.metadata.first_name || "there"
+              );
 
-            // Personalize content
-            let personalizedContent = emailContent.replace(
-              /\{\{first_name\}\}/g,
-              contact.metadata.first_name || "there"
-            );
-            let personalizedSubject = emailSubject.replace(
-              /\{\{first_name\}\}/g,
-              contact.metadata.first_name || "there"
-            );
+              // Add View in Browser link if enabled
+              if (campaign.metadata.public_sharing_enabled) {
+                const viewInBrowserUrl = `${baseUrl}/public/campaigns/${campaignId}`;
+                const viewInBrowserLink = `
+                  <div style="text-align: center; padding: 10px 0; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
+                    <a href="${viewInBrowserUrl}" 
+                       style="color: #6b7280; font-size: 12px; text-decoration: underline;">
+                      View this email in your browser
+                    </a>
+                  </div>
+                `;
+                personalizedContent = viewInBrowserLink + personalizedContent;
+              }
 
-            // Add View in Browser link if enabled
-            if (campaign.metadata.public_sharing_enabled) {
-              const viewInBrowserUrl = `${baseUrl}/public/campaigns/${campaignId}`;
-              const viewInBrowserLink = `
-                <div style="text-align: center; padding: 10px 0; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
-                  <a href="${viewInBrowserUrl}" 
-                     style="color: #6b7280; font-size: 12px; text-decoration: underline;">
-                    View this email in your browser
-                  </a>
+              // Add unsubscribe footer
+              const unsubscribeUrl = createUnsubscribeUrl(
+                contact.metadata.email,
+                baseUrl,
+                campaignId
+              );
+
+              const unsubscribeFooter = `
+                <div style="margin-top: 40px; padding: 20px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #6b7280;">
+                  <p style="margin: 0 0 10px 0;">
+                    You received this email because you subscribed to our mailing list.
+                  </p>
+                  <p style="margin: 0 0 10px 0;">
+                    <a href="${unsubscribeUrl}" style="color: #6b7280; text-decoration: underline;">Unsubscribe</a> from future emails.
+                  </p>
                 </div>
               `;
-              personalizedContent = viewInBrowserLink + personalizedContent;
-            }
 
-            // Add unsubscribe footer
-            const unsubscribeUrl = createUnsubscribeUrl(
-              contact.metadata.email,
-              baseUrl,
-              campaignId
-            );
+              personalizedContent += unsubscribeFooter;
 
-            const unsubscribeFooter = `
-              <div style="margin-top: 40px; padding: 20px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #6b7280;">
-                <p style="margin: 0 0 10px 0;">
-                  You received this email because you subscribed to our mailing list.
-                </p>
-                <p style="margin: 0 0 10px 0;">
-                  <a href="${unsubscribeUrl}" style="color: #6b7280; text-decoration: underline;">Unsubscribe</a> from future emails.
-                </p>
-              </div>
-            `;
+              // Send email
+              const result = await sendEmail({
+                from: `${settings.metadata.from_name} <${settings.metadata.from_email}>`,
+                to: contact.metadata.email,
+                subject: personalizedSubject,
+                html: personalizedContent,
+                reply_to:
+                  settings.metadata.reply_to_email ||
+                  settings.metadata.from_email,
+                campaignId: campaignId,
+                contactId: contact.id,
+                headers: {
+                  "X-Campaign-ID": campaignId,
+                  "X-Contact-ID": contact.id,
+                  "List-Unsubscribe": `<${unsubscribeUrl}>`,
+                  "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                },
+              });
 
-            personalizedContent += unsubscribeFooter;
+              console.log(`✅ Sent to ${contact.metadata.email}`);
 
-            // Send email
-            const result = await sendEmail({
-              from: `${settings.metadata.from_name} <${settings.metadata.from_email}>`,
-              to: contact.metadata.email,
-              subject: personalizedSubject,
-              html: personalizedContent,
-              reply_to:
-                settings.metadata.reply_to_email ||
-                settings.metadata.from_email,
-              campaignId: campaignId,
-              contactId: contact.id,
-              headers: {
-                "X-Campaign-ID": campaignId,
-                "X-Contact-ID": contact.id,
-                "List-Unsubscribe": `<${unsubscribeUrl}>`,
-                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-              },
-            });
+              // Update record to "sent"
+              await createCampaignSend({
+                campaignId: campaignId,
+                contactId: contact.id,
+                contactEmail: contact.metadata.email,
+                status: "sent",
+                resendMessageId: result.id,
+                pendingRecordId: pendingRecordId,
+              });
 
-            console.log(`✅ Sent to ${contact.metadata.email}`);
+              return { success: true, email: contact.metadata.email };
+            } catch (error: any) {
+              // Check for rate limit error
+              if (
+                error instanceof ResendRateLimitError ||
+                error.message?.toLowerCase().includes("rate limit") ||
+                error.message?.toLowerCase().includes("too many requests") ||
+                error.statusCode === 429
+              ) {
+                const retryAfter = error.retryAfter || 3600;
+                console.log(
+                  `⚠️  Rate limit hit! Will retry after ${retryAfter}s`
+                );
 
-            // Update record to "sent"
-            await createCampaignSend({
-              campaignId: campaignId,
-              contactId: contact.id,
-              contactEmail: contact.metadata.email,
-              status: "sent",
-              resendMessageId: result.id,
-              pendingRecordId: pendingRecordId,
-            });
+                // Inngest will automatically retry this step
+                throw new Error(
+                  `Rate limit hit. Retry after ${retryAfter} seconds`
+                );
+              }
 
-            return { success: true, email: contact.metadata.email };
-          } catch (error: any) {
-            // Check for rate limit error
-            if (
-              error instanceof ResendRateLimitError ||
-              error.message?.toLowerCase().includes("rate limit") ||
-              error.message?.toLowerCase().includes("too many requests") ||
-              error.statusCode === 429
-            ) {
-              const retryAfter = error.retryAfter || 3600;
-              console.log(
-                `⚠️  Rate limit hit! Will retry after ${retryAfter}s`
+              // Regular error - mark as failed
+              console.error(
+                `❌ Failed to send to ${contact.metadata.email}:`,
+                error.message
               );
 
-              // Inngest will automatically retry this step
-              throw new Error(
-                `Rate limit hit. Retry after ${retryAfter} seconds`
-              );
+              await createCampaignSend({
+                campaignId: campaignId,
+                contactId: contact.id,
+                contactEmail: contact.metadata.email,
+                status: "failed",
+                errorMessage: error.message,
+                pendingRecordId: pendingRecordId,
+              });
+
+              return {
+                success: false,
+                email: contact.metadata.email,
+                error: error.message,
+              };
             }
-
-            // Regular error - mark as failed
-            console.error(
-              `❌ Failed to send to ${contact.metadata.email}:`,
-              error.message
-            );
-
-            await createCampaignSend({
-              campaignId: campaignId,
-              contactId: contact.id,
-              contactEmail: contact.metadata.email,
-              status: "failed",
-              errorMessage: error.message,
-              pendingRecordId: pendingRecordId,
-            });
-
-            return {
-              success: false,
-              email: contact.metadata.email,
-              error: error.message,
-            };
           }
-        });
+        );
 
-        // Wait for all emails in batch to complete
-        const results = await Promise.all(sendPromises);
+        // Process results
         const batchSent = results.filter((r) => r.success).length;
         const batchFailed = results.filter((r) => !r.success).length;
 

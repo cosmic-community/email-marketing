@@ -51,18 +51,21 @@ export const sendCampaignFunction = inngest.createFunction(
       throw new Error("Email settings not configured");
     }
 
-    // Step 2: Get all target contacts (no timeout!)
-    const allContacts = await step.run("fetch-target-contacts", async () => {
-      console.log(`📋 Fetching target contacts for campaign ${campaignId}...`);
-      return await getCampaignTargetContacts(campaign, {
-        maxContactsPerList: 15000,
-        totalMaxContacts: 100000,
-      });
+    // FIXED: Fetch contacts OUTSIDE of step.run() to avoid step output size limit
+    // Inngest has a 512KB limit on step outputs. With 36K+ contacts, this exceeds the limit.
+    // By fetching outside steps, we avoid the limit while still getting Inngest's benefits:
+    // - No timeout limits
+    // - Step-based retry (batches can retry independently)
+    // - Automatic failure handling
+    console.log(`📋 Fetching target contacts for campaign ${campaignId}...`);
+    const allContacts = await getCampaignTargetContacts(campaign, {
+      maxContactsPerList: 15000,
+      totalMaxContacts: 100000,
     });
 
     console.log(`📊 Total target contacts: ${allContacts.length}`);
 
-    // Step 3: Filter out already-sent contacts
+    // Step 2: Filter out already-sent contacts (returns only IDs, not full objects)
     const unsentContactIds = await step.run("filter-unsent", async () => {
       console.log(`🔍 Filtering unsent contacts...`);
       return await filterUnsentContacts(campaignId, allContacts);

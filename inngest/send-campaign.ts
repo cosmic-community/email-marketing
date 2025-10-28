@@ -14,12 +14,11 @@ import { sendEmail, ResendRateLimitError } from "@/lib/resend";
 import { createUnsubscribeUrl } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
-// Rate limiting configuration - same as before
-const EMAILS_PER_SECOND = 9; // 90% of 10/sec limit
-const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~111ms per email
+// Rate limiting configuration - OPTIMIZED for parallel sending
+const EMAILS_PER_SECOND = 9.8; // 98% of 10/sec limit (confirmed with user)
+const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~102ms per email
 const BATCH_SIZE = 50;
-const DELAY_BETWEEN_DB_OPERATIONS = 50;
-const DELAY_BETWEEN_BATCHES = 300;
+const DELAY_BETWEEN_BATCHES = 100; // Reduced from 300ms - less overhead needed
 
 // Inngest background function - NO TIMEOUT LIMITS! 🎉
 export const sendCampaignFunction = inngest.createFunction(
@@ -176,10 +175,19 @@ export const sendCampaignFunction = inngest.createFunction(
           return 0;
         }
 
-        // Send emails
-        let batchSent = 0;
-        for (const contact of reservedContacts) {
-          const startTime = Date.now();
+        // OPTIMIZED: Send emails in parallel with staggered starts (respects rate limit)
+        // All 50 emails process simultaneously, but released to Resend API at 9.8/sec
+        console.log(
+          `🚀 Sending ${reservedContacts.length} emails in parallel (staggered at ${EMAILS_PER_SECOND}/sec)...`
+        );
+
+        const sendPromises = reservedContacts.map(async (contact, index) => {
+          // Stagger sends: each email starts MIN_DELAY_MS after the previous one
+          // This ensures we stay at exactly 9.8 emails/second
+          await new Promise((resolve) =>
+            setTimeout(resolve, index * MIN_DELAY_MS)
+          );
+
           const pendingRecordId = pendingRecordIds.get(contact.id);
 
           try {
@@ -264,18 +272,7 @@ export const sendCampaignFunction = inngest.createFunction(
               pendingRecordId: pendingRecordId,
             });
 
-            batchSent++;
-
-            // Throttle to respect rate limits
-            await new Promise((resolve) =>
-              setTimeout(resolve, DELAY_BETWEEN_DB_OPERATIONS)
-            );
-
-            const elapsed = Date.now() - startTime;
-            const delay = Math.max(0, MIN_DELAY_MS - elapsed);
-            if (delay > 0) {
-              await new Promise((resolve) => setTimeout(resolve, delay));
-            }
+            return { success: true, email: contact.metadata.email };
           } catch (error: any) {
             // Check for rate limit error
             if (
@@ -310,11 +307,22 @@ export const sendCampaignFunction = inngest.createFunction(
               pendingRecordId: pendingRecordId,
             });
 
-            await new Promise((resolve) =>
-              setTimeout(resolve, DELAY_BETWEEN_DB_OPERATIONS)
-            );
+            return {
+              success: false,
+              email: contact.metadata.email,
+              error: error.message,
+            };
           }
-        }
+        });
+
+        // Wait for all emails in batch to complete
+        const results = await Promise.all(sendPromises);
+        const batchSent = results.filter((r) => r.success).length;
+        const batchFailed = results.filter((r) => !r.success).length;
+
+        console.log(
+          `📊 Batch complete: ${batchSent} sent, ${batchFailed} failed`
+        );
 
         // Update progress after batch
         const freshStats = await getCampaignSendStats(campaignId);

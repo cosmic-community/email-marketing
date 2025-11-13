@@ -34,10 +34,10 @@ export default function ClientLayoutRouter({
     fetchSettings();
   }, []);
 
-  // Pages that don't use the main layout
-  const noLayoutPages = ["/login", "/subscribe", "/subscribe/success"];
+  // Pages that don't use the main layout (public pages)
+  const noLayoutPages = ["/login"];
 
-  if (noLayoutPages.includes(pathname) || pathname.startsWith("/public/")) {
+  if (noLayoutPages.includes(pathname) || pathname.startsWith("/subscribe") || pathname.startsWith("/public/")) {
     return <>{children}</>;
   }
 

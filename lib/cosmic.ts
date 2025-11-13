@@ -2066,6 +2066,8 @@ export async function createEmailContact(
         subscribe_date:
           data.subscribe_date || new Date().toISOString().split("T")[0],
         notes: data.notes || "",
+        verification_token: data.verification_token || "",
+        verification_token_expires: data.verification_token_expires || "",
       },
     });
 

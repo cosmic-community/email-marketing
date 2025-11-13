@@ -4,8 +4,41 @@ import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
 
-export default async function SubscribePage() {
+interface PageProps {
+  searchParams: {
+    error?: string
+  }
+}
+
+export default async function SubscribePage({ searchParams }: PageProps) {
   const settings = await getSettings()
+  const error = searchParams.error
+
+  // Map error codes to user-friendly messages
+  const errorMessages: Record<string, { title: string; message: string }> = {
+    invalid_verification_link: {
+      title: 'Invalid Verification Link',
+      message: 'The verification link appears to be invalid or incomplete. Please check your email and try clicking the link again.'
+    },
+    contact_not_found: {
+      title: 'Subscription Not Found',
+      message: 'We couldn\'t find a subscription associated with this verification link. The subscription may have been removed or the link may be incorrect.'
+    },
+    invalid_token: {
+      title: 'Invalid Verification Token',
+      message: 'The verification token is invalid. Please check your email and use the most recent verification link we sent you.'
+    },
+    token_expired: {
+      title: 'Verification Link Expired',
+      message: 'This verification link has expired (links are valid for 24 hours). Please submit the form below to receive a new verification email.'
+    },
+    verification_failed: {
+      title: 'Verification Failed',
+      message: 'An error occurred while verifying your email. Please try again or contact support if the problem persists.'
+    }
+  }
+
+  const errorInfo = error && errorMessages[error]
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -15,7 +48,7 @@ export default async function SubscribePage() {
           <div className="flex justify-between items-center">
             <Link href="/" className="flex items-center space-x-2">
               {settings?.metadata.brand_logo?.imgix_url ? (
-                <img 
+                <img
                   src={`${settings.metadata.brand_logo.imgix_url}?w=64&h=64&fit=crop&auto=format,compress`}
                   alt={`${settings.metadata.company_name || 'Company'} logo`}
                   className="w-8 h-8 object-contain"
@@ -50,6 +83,25 @@ export default async function SubscribePage() {
             </p>
           </div>
 
+          {/* Error Message */}
+          {errorInfo && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-6 mb-8">
+              <div className="flex items-start space-x-3">
+                <svg className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <h3 className="text-lg font-semibold text-red-900 mb-1">
+                    {errorInfo.title}
+                  </h3>
+                  <p className="text-red-700">
+                    {errorInfo.message}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Subscription Form Card */}
           <div className="bg-white rounded-lg shadow-lg p-8 mb-8">
             <SubscriptionForm />
@@ -72,7 +124,7 @@ export default async function SubscribePage() {
                   <p className="text-gray-600 text-sm">Stay informed with our latest news and insights</p>
                 </div>
               </div>
-              
+
               <div className="flex items-start space-x-3">
                 <div className="flex-shrink-0 w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
                   <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
@@ -84,7 +136,7 @@ export default async function SubscribePage() {
                   <p className="text-gray-600 text-sm">Access subscriber-only tips and resources</p>
                 </div>
               </div>
-              
+
               <div className="flex items-start space-x-3">
                 <div className="flex-shrink-0 w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
                   <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
@@ -96,7 +148,7 @@ export default async function SubscribePage() {
                   <p className="text-gray-600 text-sm">We respect your inbox and only send valuable content</p>
                 </div>
               </div>
-              
+
               <div className="flex items-start space-x-3">
                 <div className="flex-shrink-0 w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
                   <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
@@ -114,12 +166,12 @@ export default async function SubscribePage() {
           {/* Privacy Notice */}
           <div className="text-center mt-8">
             <p className="text-sm text-gray-500">
-              By subscribing, you agree to receive email communications from us. 
+              By subscribing, you agree to receive email communications from us.
               {settings?.metadata.privacy_policy_url && (
                 <>
                   {' '}Read our{' '}
-                  <a 
-                    href={settings.metadata.privacy_policy_url} 
+                  <a
+                    href={settings.metadata.privacy_policy_url}
                     className="text-blue-600 hover:text-blue-800 underline"
                     target="_blank"
                     rel="noopener noreferrer"

@@ -136,21 +136,38 @@ export default function SubscriptionForm() {
   if (status === 'success') {
     return (
       <div className="text-center py-8">
-        <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
+        <Mail className="w-16 h-16 text-blue-500 mx-auto mb-4" />
         <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-          Welcome to our community!
+          Check Your Email! 📧
         </h3>
         <p className="text-gray-600 mb-6">
           {message}
         </p>
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-          <div className="flex items-center justify-center space-x-2 mb-2">
-            <Mail className="w-5 h-5 text-blue-600" />
-            <p className="text-blue-800 font-medium">Check your inbox!</p>
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-5 mb-6">
+          <div className="flex items-center justify-center space-x-2 mb-3">
+            <Shield className="w-6 h-6 text-yellow-600" />
+            <p className="text-yellow-900 font-semibold text-lg">Action Required</p>
           </div>
-          <p className="text-sm text-blue-700">
-            We've sent you a welcome email with important information about your subscription.
+          <p className="text-sm text-yellow-800 mb-3">
+            <strong>Please verify your email address to complete your subscription.</strong>
           </p>
+          <p className="text-sm text-yellow-700">
+            We've sent you an email with a verification link. Click the link in the email to activate your subscription and start receiving our updates.
+          </p>
+        </div>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-left">
+          <h4 className="font-semibold text-blue-900 mb-2 text-sm">Why verify?</h4>
+          <p className="text-xs text-blue-700 leading-relaxed">
+            Email verification protects you from being signed up by someone else and ensures we only send emails to people who genuinely want to hear from us. This is an industry-standard security practice.
+          </p>
+        </div>
+        <div className="text-sm text-gray-500 mb-6">
+          <p className="mb-2">Didn't receive the email?</p>
+          <ul className="text-xs space-y-1">
+            <li>• Check your spam or junk folder</li>
+            <li>• Make sure you entered the correct email address</li>
+            <li>• The verification link expires in 24 hours</li>
+          </ul>
         </div>
         <Button 
           onClick={() => {

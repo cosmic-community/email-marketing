@@ -62,7 +62,7 @@ export function middleware(request: NextRequest) {
   // Handle page authentication (existing logic)
   if (
     pathname === '/login' ||
-    pathname === '/subscribe' ||
+    pathname.startsWith('/subscribe') || // Allow all subscribe pages including /subscribe/verified
     pathname === '/api/subscribe' ||
     pathname === '/api/auth' ||
     pathname.startsWith('/api/auth') ||

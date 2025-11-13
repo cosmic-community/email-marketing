@@ -68,7 +68,7 @@ export function verifyAccessCode(request: NextRequest): boolean {
 export function shouldBypassSecurity(pathname: string): boolean {
   // Routes that should bypass security checks (public endpoints)
   const publicRoutes = [
-    "/api/subscribe",
+    "/api/subscribe", // Includes /api/subscribe/verify
     "/api/unsubscribe",
     "/api/track",
     "/api/auth/login",

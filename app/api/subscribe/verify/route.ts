@@ -8,11 +8,14 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const token = searchParams.get('token')
     const email = searchParams.get('email')
+    
+    // Get the base URL from the request origin
+    const baseUrl = request.nextUrl.origin
 
     // Validate required parameters
     if (!token || !email) {
       return NextResponse.redirect(
-        new URL('/subscribe?error=invalid_verification_link', request.url)
+        new URL('/subscribe?error=invalid_verification_link', baseUrl)
       )
     }
 
@@ -27,7 +30,7 @@ export async function GET(request: NextRequest) {
 
     if (objects.length === 0) {
       return NextResponse.redirect(
-        new URL('/subscribe?error=contact_not_found', request.url)
+        new URL('/subscribe?error=contact_not_found', baseUrl)
       )
     }
 
@@ -37,14 +40,14 @@ export async function GET(request: NextRequest) {
     // Check if already verified/active
     if (status === 'Active') {
       return NextResponse.redirect(
-        new URL('/subscribe/verified?already_verified=true', request.url)
+        new URL('/subscribe/verified?already_verified=true', baseUrl)
       )
     }
 
     // Verify the token matches
     if (contact.metadata.verification_token !== token) {
       return NextResponse.redirect(
-        new URL('/subscribe?error=invalid_token', request.url)
+        new URL('/subscribe?error=invalid_token', baseUrl)
       )
     }
 
@@ -54,7 +57,7 @@ export async function GET(request: NextRequest) {
     
     if (now > expirationDate) {
       return NextResponse.redirect(
-        new URL('/subscribe?error=token_expired', request.url)
+        new URL('/subscribe?error=token_expired', baseUrl)
       )
     }
 
@@ -179,12 +182,14 @@ export async function GET(request: NextRequest) {
 
     // Redirect to success page
     return NextResponse.redirect(
-      new URL('/subscribe/verified?success=true', request.url)
+      new URL('/subscribe/verified?success=true', baseUrl)
     )
   } catch (error) {
     console.error('Error verifying email:', error)
+    // Get the base URL from the request for error redirect
+    const baseUrl = request.nextUrl.origin
     return NextResponse.redirect(
-      new URL('/subscribe?error=verification_failed', request.url)
+      new URL('/subscribe?error=verification_failed', baseUrl)
     )
   }
 }

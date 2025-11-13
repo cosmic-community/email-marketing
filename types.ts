@@ -127,7 +127,7 @@ export interface EmailContact extends CosmicObject {
     email: string;
     status: {
       key: string;
-      value: "Active" | "Unsubscribed" | "Bounced";
+      value: "Active" | "Unsubscribed" | "Bounced" | "Pending";
     };
     lists?: EmailList[] | string[]; // Can be full objects or IDs
     tags?: string[] | null;
@@ -135,6 +135,9 @@ export interface EmailContact extends CosmicObject {
     notes?: string | null;
     unsubscribed_date?: string; // Date when contact unsubscribed
     unsubscribe_campaign?: string | MarketingCampaign; // Campaign that triggered unsubscribe
+    verification_token?: string; // Token for email verification (double opt-in)
+    verification_token_expires?: string; // Expiration timestamp for verification token
+    verified_at?: string; // Timestamp when email was verified
   };
 }
 
@@ -327,11 +330,13 @@ export interface CreateContactData {
   first_name: string;
   last_name?: string;
   email: string;
-  status: "Active" | "Unsubscribed" | "Bounced";
+  status: "Active" | "Unsubscribed" | "Bounced" | "Pending";
   list_ids?: string[]; // NEW: for list membership
   tags?: string[];
   subscribe_date?: string;
   notes?: string;
+  verification_token?: string; // Token for email verification
+  verification_token_expires?: string; // Expiration timestamp
 }
 
 export interface CreateListData {

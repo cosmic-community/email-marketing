@@ -14,12 +14,14 @@ import { sendEmail, ResendRateLimitError } from "@/lib/resend";
 import { createUnsubscribeUrl } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
-// Rate limiting configuration - SAFE parallel sending with concurrency control
-const EMAILS_PER_SECOND = 9; // 90% of 10/sec limit (safer margin)
+// Rate limiting configuration - OPTIMIZED for large campaigns (36K+)
+// Cosmic API limits: 100 req/sec rate limit, 200 burst limit
+// Resend API limits: 10 emails/sec
+const EMAILS_PER_SECOND = 9; // 90% of 10/sec Resend limit (safer margin)
 const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~111ms per email
-const BATCH_SIZE = 50;
-const PARALLEL_LIMIT = 10; // Process 10 emails concurrently (prevents rate limit burst)
-const DELAY_BETWEEN_BATCHES = 200; // Slightly increased for safety
+const BATCH_SIZE = 500; // OPTIMIZED: 500 contacts per batch (72 steps for 36K = well under 1000 limit)
+const PARALLEL_LIMIT = 9; // Match Resend rate limit exactly (9 emails/sec)
+const DELAY_BETWEEN_BATCHES = 0; // No delay needed (rate limiting handled within batches)
 
 // Helper function to process promises with concurrency limit
 async function processWithConcurrencyLimit<T, R>(
@@ -127,8 +129,7 @@ export const sendCampaignFunction = inngest.createFunction(
     );
 
     console.log(
-      `✅ ${unsentContacts.length} contacts remaining to send (${
-        allContacts.length - unsentContacts.length
+      `✅ ${unsentContacts.length} contacts remaining to send (${allContacts.length - unsentContacts.length
       } already sent)`
     );
 
@@ -187,8 +188,7 @@ export const sendCampaignFunction = inngest.createFunction(
 
       await step.run(`batch-${batchIndex}`, async () => {
         console.log(
-          `📦 Processing batch ${batchIndex + 1}/${totalBatches} (${
-            batchContacts.length
+          `📦 Processing batch ${batchIndex + 1}/${totalBatches} (${batchContacts.length
           } contacts)`
         );
 
@@ -373,10 +373,8 @@ export const sendCampaignFunction = inngest.createFunction(
         return batchSent;
       });
 
-      // Delay between batches
-      if (batchIndex < totalBatches - 1) {
-        await step.sleep("batch-delay", `${DELAY_BETWEEN_BATCHES}ms`);
-      }
+      // OPTIMIZED: No delay between batches needed (rate limiting handled within batch processing)
+      // Removed: step.sleep() for faster execution
     }
 
     // Check if campaign is complete

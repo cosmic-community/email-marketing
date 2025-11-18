@@ -88,8 +88,9 @@ export async function reserveContactsForSending(
     return { reserved, pendingRecordIds };
   }
 
-  // OPTIMIZATION 2: Increased delay to reduce MongoDB CPU load
-  const RESERVATION_DELAY = 150; // Increased from 50ms to 150ms (3x slower = gentler on DB)
+  // OPTIMIZATION 2: Balanced delay for Cosmic API limits (100 req/sec)
+  // With 500 contacts per batch: 1,001 requests over 25 seconds = 40 req/sec (40% of Cosmic limit)
+  const RESERVATION_DELAY = 50; // Optimized for Cosmic's 100 req/sec limit
   let processedCount = 0;
 
   // CRITICAL FIX: Process reservations with check-before-insert to prevent duplicates

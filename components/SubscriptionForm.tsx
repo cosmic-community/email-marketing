@@ -43,6 +43,18 @@ export default function SubscriptionForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
+    if (!firstName) {
+      setStatus('error')
+      setMessage('First name is required')
+      return
+    }
+
+    if (!lastName) {
+      setStatus('error')
+      setMessage('Last name is required')
+      return
+    }
+
     if (!email) {
       setStatus('error')
       setMessage('Email is required')
@@ -193,6 +205,48 @@ export default function SubscriptionForm() {
         <span>Protected by advanced bot detection</span>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <Label htmlFor="firstName" className="text-base font-medium">
+            First Name *
+          </Label>
+          <Input
+            id="firstName"
+            type="text"
+            value={firstName}
+            onChange={(e) => {
+              setFirstName(e.target.value)
+              handleUserInteraction()
+            }}
+            onFocus={handleUserInteraction}
+            placeholder="Your first name"
+            required
+            disabled={isSubmitting}
+            className="mt-2 text-base h-12"
+          />
+        </div>
+        
+        <div>
+          <Label htmlFor="lastName" className="text-base font-medium">
+            Last Name *
+          </Label>
+          <Input
+            id="lastName"
+            type="text"
+            value={lastName}
+            onChange={(e) => {
+              setLastName(e.target.value)
+              handleUserInteraction()
+            }}
+            onFocus={handleUserInteraction}
+            placeholder="Your last name"
+            required
+            disabled={isSubmitting}
+            className="mt-2 text-base h-12"
+          />
+        </div>
+      </div>
+
       <div>
         <Label htmlFor="email" className="text-base font-medium">
           Email Address *
@@ -211,46 +265,6 @@ export default function SubscriptionForm() {
           disabled={isSubmitting}
           className="mt-2 text-base h-12"
         />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <Label htmlFor="firstName" className="text-base font-medium">
-            First Name (Optional)
-          </Label>
-          <Input
-            id="firstName"
-            type="text"
-            value={firstName}
-            onChange={(e) => {
-              setFirstName(e.target.value)
-              handleUserInteraction()
-            }}
-            onFocus={handleUserInteraction}
-            placeholder="Your first name"
-            disabled={isSubmitting}
-            className="mt-2 text-base h-12"
-          />
-        </div>
-        
-        <div>
-          <Label htmlFor="lastName" className="text-base font-medium">
-            Last Name (Optional)
-          </Label>
-          <Input
-            id="lastName"
-            type="text"
-            value={lastName}
-            onChange={(e) => {
-              setLastName(e.target.value)
-              handleUserInteraction()
-            }}
-            onFocus={handleUserInteraction}
-            placeholder="Your last name"
-            disabled={isSubmitting}
-            className="mt-2 text-base h-12"
-          />
-        </div>
       </div>
 
       {/* Honeypot field - hidden from users, should remain empty */}
@@ -276,7 +290,7 @@ export default function SubscriptionForm() {
 
       <Button
         type="submit"
-        disabled={isSubmitting || !email || !botProtectionReady}
+        disabled={isSubmitting || !firstName || !lastName || !email || !botProtectionReady}
         className="w-full h-12 text-base font-medium"
       >
         {isSubmitting ? (

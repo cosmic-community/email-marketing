@@ -678,16 +678,24 @@ export default function EditCampaignContentForm({
   const addContextItem = async (url: string) => {
     if (!url.trim()) return;
 
-    // FIXED: Better detection of webpage vs file
-    // Check if URL starts with http:// or https:// to identify webpages
-    // Otherwise, check for common file extensions to identify files
-    const isWebpage = url.trim().startsWith('http://') || url.trim().startsWith('https://');
-    const hasFileExtension = /\.(pdf|doc|docx|txt|csv|xls|xlsx|zip|rar)$/i.test(url.trim());
+    // FIXED: Better detection - check for image/media file extensions FIRST
+    // This handles URLs like https://imgix.cosmicjs.com/...image.png correctly
+    const imageExtensions = /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico|tiff|tif)$/i;
+    const documentExtensions = /\.(pdf|doc|docx|txt|csv|xls|xlsx|zip|rar|ppt|pptx)$/i;
+    
+    // Check if URL has an image extension - this takes priority
+    const isImageFile = imageExtensions.test(url.trim());
+    // Check if URL has a document extension
+    const isDocumentFile = documentExtensions.test(url.trim());
+    
+    // Determine type: if it has a media/document extension, it's a file
+    // Otherwise, treat it as a webpage
+    const itemType: "file" | "webpage" = (isImageFile || isDocumentFile) ? "file" : "webpage";
     
     const newItem: ContextItem = {
       id: Date.now().toString(),
       url: url.trim(),
-      type: isWebpage ? "webpage" : (hasFileExtension ? "file" : "webpage"),
+      type: itemType,
       status: "pending",
     };
 

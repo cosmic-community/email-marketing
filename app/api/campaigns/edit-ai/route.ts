@@ -184,11 +184,16 @@ export async function POST(request: NextRequest) {
             // Get current year for copyright
             const currentYear = new Date().getFullYear()
 
-            // Create AI prompt for editing - ONLY for body content
-            const aiPrompt = `Please improve this HTML email campaign content based on the following instructions: "${prompt}"
+            // Check if the prompt is asking for subject line changes
+            const isSubjectRequest = /subject|headline|title/i.test(prompt)
+
+            // Create AI prompt for editing
+            const aiPrompt = `Please improve this HTML email campaign content${isSubjectRequest ? ' and subject line' : ''} based on the following instructions: "${prompt}"
 
 Current email campaign content:
 ${currentContent}
+
+${isSubjectRequest ? `Current subject line: ${currentSubject || 'No subject set'}` : ''}
 
 Brand Context:
 Company: ${companyName}
@@ -209,8 +214,9 @@ Instructions:
 - Apply brand guidelines and colors where appropriate
 - Use the specified tone for any text modifications
 - If updating footer copyright, use ${currentYear} as the current year
+${isSubjectRequest ? `- If the request involves the subject line, provide an improved subject line (50 characters or less)` : ''}
 
-IMPORTANT: DO NOT include or modify any unsubscribe links - these are added automatically to all emails. Return ONLY the improved HTML email content without any backticks, code block markers, or additional text. Start directly with the HTML content.`
+IMPORTANT: DO NOT include or modify any unsubscribe links - these are added automatically to all emails. ${isSubjectRequest ? 'Return the improved HTML email content and, if requested, a new subject line in JSON format: {"content": "...", "subject": "..."}. If not changing the subject, just include the content.' : 'Return ONLY the improved HTML email content without any backticks, code block markers, or additional text. Start directly with the HTML content.'}`
 
             controller.enqueue(
               encoder.encode('data: {"type":"status","message":"Applying AI improvements...","progress":60}\n\n')
@@ -260,11 +266,28 @@ IMPORTANT: DO NOT include or modify any unsubscribe links - these are added auto
                     )
 
                     // Use the content as-is since we instructed AI not to use backticks
-                    const finalContent = improvedContent.trim()
+                    let finalContent = improvedContent.trim()
+                    let finalSubject = currentSubject
 
-                    // Send complete response with content only
+                    // Check if response is in JSON format (for subject + content updates)
+                    if (isSubjectRequest && finalContent.startsWith('{')) {
+                      try {
+                        const parsed = JSON.parse(finalContent)
+                        if (parsed.content) {
+                          finalContent = parsed.content
+                        }
+                        if (parsed.subject) {
+                          finalSubject = parsed.subject
+                        }
+                      } catch (parseError) {
+                        // If parsing fails, treat as regular content
+                        console.warn('Failed to parse JSON response, using as plain content')
+                      }
+                    }
+
+                    // Send complete response with content and potentially updated subject
                     controller.enqueue(
-                      encoder.encode(`data: {"type":"complete","data":{"content":"${finalContent.replace(/"/g, '\\"').replace(/\n/g, '\\n')}","subject":"${currentSubject?.replace(/"/g, '\\"') || ''}"}}\n\n`)
+                      encoder.encode(`data: {"type":"complete","data":{"content":"${finalContent.replace(/"/g, '\\"').replace(/\n/g, '\\n')}","subject":"${finalSubject?.replace(/"/g, '\\"') || ''}"}}\n\n`)
                     )
 
                     controller.close()

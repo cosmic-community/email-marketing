@@ -24,6 +24,7 @@ import {
   Edit,
   X,
   BookTemplate,
+  Sparkles,
 } from "lucide-react";
 import {
   Dialog,
@@ -209,6 +210,9 @@ export default function EditCampaignContentForm({
   const [showContextInput, setShowContextInput] = useState(false);
   const [contextUrl, setContextUrl] = useState("");
 
+  // AI Subject generation state
+  const [isGeneratingSubject, setIsGeneratingSubject] = useState(false);
+
   // Refs for autofocus and auto-resize
   const aiPromptRef = useRef<HTMLTextAreaElement>(null);
 
@@ -280,6 +284,72 @@ export default function EditCampaignContentForm({
   const handleContentChange = (content: string) => {
     // Immediately update form data to ensure content is saved
     setFormData((prev) => ({ ...prev, content }));
+  };
+
+  // Handle AI Subject Generation
+  const handleGenerateSubject = async () => {
+    if (!formData.content.trim()) {
+      setError("Please add some content first before generating a subject");
+      toast({
+        title: "Content Required",
+        description: "Add email content before generating a subject line",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsGeneratingSubject(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/campaigns/generate-subject", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content: formData.content,
+          templateType: formData.template_type,
+          context_items: contextItems.filter(
+            (item) => item.status === "ready" || item.status === "pending"
+          ),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to generate subject");
+      }
+
+      const result = await response.json();
+
+      if (result.success && result.subject) {
+        setFormData((prev) => ({
+          ...prev,
+          subject: result.subject,
+        }));
+
+        toast({
+          title: "Subject Generated!",
+          description: result.fallback
+            ? "Generated fallback subject line"
+            : "AI-generated subject line ready to use",
+          variant: "success",
+        });
+      }
+    } catch (error) {
+      console.error("Subject generation error:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to generate subject";
+      setError(errorMessage);
+      toast({
+        title: "Generation Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeneratingSubject(false);
+    }
   };
 
   // Handle Create Template
@@ -558,7 +628,7 @@ export default function EditCampaignContentForm({
                     content: accumulatedContent,
                   }));
                 } else if (data.type === "complete") {
-                  // CRITICAL: Final update with complete content
+                  // CRITICAL: Final update with complete content and subject
                   setFormData((prev) => ({
                     ...prev,
                     content: data.data.content,
@@ -569,7 +639,9 @@ export default function EditCampaignContentForm({
                   setAiProgress(100);
                   toast({
                     title: "AI Editing Complete",
-                    description: "Content edited successfully! Continue editing or save campaign.",
+                    description: data.data.subject 
+                      ? "Content and subject updated successfully!"
+                      : "Content edited successfully! Continue editing or save campaign.",
                     variant: "success",
                   });
 
@@ -606,16 +678,24 @@ export default function EditCampaignContentForm({
   const addContextItem = async (url: string) => {
     if (!url.trim()) return;
 
-    // FIXED: Better detection of webpage vs file
-    // Check if URL starts with http:// or https:// to identify webpages
-    // Otherwise, check for common file extensions to identify files
-    const isWebpage = url.trim().startsWith('http://') || url.trim().startsWith('https://');
-    const hasFileExtension = /\.(pdf|doc|docx|txt|csv|xls|xlsx|zip|rar)$/i.test(url.trim());
+    // FIXED: Better detection - check for image/media file extensions FIRST
+    // This handles URLs like https://imgix.cosmicjs.com/...image.png correctly
+    const imageExtensions = /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico|tiff|tif)$/i;
+    const documentExtensions = /\.(pdf|doc|docx|txt|csv|xls|xlsx|zip|rar|ppt|pptx)$/i;
+    
+    // Check if URL has an image extension - this takes priority
+    const isImageFile = imageExtensions.test(url.trim());
+    // Check if URL has a document extension
+    const isDocumentFile = documentExtensions.test(url.trim());
+    
+    // Determine type: if it has a media/document extension, it's a file
+    // Otherwise, treat it as a webpage
+    const itemType: "file" | "webpage" = (isImageFile || isDocumentFile) ? "file" : "webpage";
     
     const newItem: ContextItem = {
       id: Date.now().toString(),
       url: url.trim(),
-      type: isWebpage ? "webpage" : (hasFileExtension ? "file" : "webpage"),
+      type: itemType,
       status: "pending",
     };
 
@@ -731,22 +811,39 @@ export default function EditCampaignContentForm({
                 </div>
               )}
 
-              {/* Subject Line */}
+              {/* Subject Line with AI Generation */}
               <div className="space-y-2">
                 <Label htmlFor="subject">Subject Line</Label>
-                <Input
-                  id="subject"
-                  type="text"
-                  value={formData.subject}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      subject: e.target.value,
-                    }))
-                  }
-                  placeholder="Enter email subject line"
-                  className="w-full"
-                />
+                <div className="flex items-center space-x-2">
+                  <Input
+                    id="subject"
+                    type="text"
+                    value={formData.subject}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        subject: e.target.value,
+                      }))
+                    }
+                    placeholder="Enter email subject line"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleGenerateSubject}
+                    disabled={isGeneratingSubject || !formData.content.trim()}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center space-x-2 text-purple-600 border-purple-300 hover:bg-purple-50"
+                    title="Generate subject line from content using AI"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    <span>{isGeneratingSubject ? "Generating..." : "AI Subject"}</span>
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-600">
+                  💡 Tip: Add content first, then click "AI Subject" to generate a subject line
+                </p>
               </div>
 
               {/* Main Content Editor - 1/3 2/3 Layout */}

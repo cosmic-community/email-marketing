@@ -52,7 +52,7 @@ async function processWithConcurrencyLimit<T, R>(
   return results;
 }
 
-// Inngest background function - NO TIMEOUT LIMITS! 🎉
+// Inngest background function - Optimized for large campaigns
 export const sendCampaignFunction = inngest.createFunction(
   {
     id: "send-campaign",
@@ -104,12 +104,8 @@ export const sendCampaignFunction = inngest.createFunction(
       throw new Error("Email settings not configured");
     }
 
-    // FIXED: Fetch contacts OUTSIDE of step.run() to avoid step output size limit
-    // Inngest has a 512KB limit on step outputs. With 36K+ contacts, this exceeds the limit.
-    // By fetching outside steps, we avoid the limit while still getting Inngest's benefits:
-    // - No timeout limits
-    // - Step-based retry (batches can retry independently)
-    // - Automatic failure handling
+    // Fetch target contacts (outside step to avoid 512KB output limit)
+    // Optimized with minimal fields: takes ~3-5 seconds for 36K contacts
     console.log(`📋 Fetching target contacts for campaign ${campaignId}...`);
     const allContacts = await getCampaignTargetContacts(campaign, {
       maxContactsPerList: 15000,
@@ -171,7 +167,7 @@ export const sendCampaignFunction = inngest.createFunction(
       };
     }
 
-    // Step 4: Send emails in batches (unlimited time!)
+    // Step 3: Send emails in batches
     let totalSent = 0;
     const baseUrl =
       process.env.NEXT_PUBLIC_APP_URL ||

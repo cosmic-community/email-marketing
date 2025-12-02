@@ -14,13 +14,15 @@ import { sendEmail, ResendRateLimitError } from "@/lib/resend";
 import { createUnsubscribeUrl } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
-// Rate limiting configuration - OPTIMIZED for large campaigns (36K+)
+// Rate limiting configuration - OPTIMIZED for Vercel timeout limits
 // Cosmic API limits: 100 req/sec rate limit, 200 burst limit
 // Resend API limits: 10 emails/sec
+// Vercel limits: 300 second maxDuration (5 minutes)
 const EMAILS_PER_SECOND = 9; // 90% of 10/sec Resend limit (safer margin)
 const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~111ms per email
-const BATCH_SIZE = 500; // OPTIMIZED: 500 contacts per batch (72 steps for 36K = well under 1000 limit)
+const BATCH_SIZE = 100; // BALANCED: 100 contacts per batch (~20s each = safer for timeouts)
 const PARALLEL_LIMIT = 9; // Match Resend rate limit exactly (9 emails/sec)
+const MAX_BATCHES_PER_RUN = 12; // Process 12 batches per function run (~4 min) then continue
 const DELAY_BETWEEN_BATCHES = 0; // No delay needed (rate limiting handled within batches)
 
 // Helper function to process promises with concurrency limit
@@ -104,20 +106,38 @@ export const sendCampaignFunction = inngest.createFunction(
       throw new Error("Email settings not configured");
     }
 
-    // Fetch target contacts (outside step to avoid 512KB output limit)
-    // Optimized with minimal fields: takes ~3-5 seconds for 36K contacts
-    console.log(`📋 Fetching target contacts for campaign ${campaignId}...`);
+    // Step 2: Fetch and filter contacts (combined to minimize steps and avoid blocking)
+    // Only return unsent contact IDs to stay under 512KB step output limit
+    const { allContactIds, unsentContactIds } = await step.run(
+      "fetch-and-filter-contacts",
+      async () => {
+        console.log(`📋 Fetching target contacts for campaign ${campaignId}...`);
+        const contacts = await getCampaignTargetContacts(campaign, {
+          maxContactsPerList: 15000,
+          totalMaxContacts: 100000,
+        });
+        console.log(`📊 Total target contacts: ${contacts.length}`);
+
+        console.log(`🔍 Filtering unsent contacts...`);
+        const unsentIds = await filterUnsentContacts(campaignId, contacts);
+        console.log(
+          `✅ ${unsentIds.length} contacts remaining to send (${contacts.length - unsentIds.length
+          } already sent)`
+        );
+
+        // Return only IDs to stay under 512KB limit
+        return {
+          allContactIds: contacts.map((c) => c.id),
+          unsentContactIds: unsentIds,
+        };
+      }
+    );
+
+    // Re-fetch only the contacts we need (much faster as it's a smaller filtered set)
+    console.log(`📋 Re-fetching ${unsentContactIds.length} unsent contacts...`);
     const allContacts = await getCampaignTargetContacts(campaign, {
       maxContactsPerList: 15000,
       totalMaxContacts: 100000,
-    });
-
-    console.log(`📊 Total target contacts: ${allContacts.length}`);
-
-    // Step 2: Filter out already-sent contacts (returns only IDs, not full objects)
-    const unsentContactIds = await step.run("filter-unsent", async () => {
-      console.log(`🔍 Filtering unsent contacts...`);
-      return await filterUnsentContacts(campaignId, allContacts);
     });
 
     const unsentContacts = allContacts.filter((c) =>
@@ -167,17 +187,22 @@ export const sendCampaignFunction = inngest.createFunction(
       };
     }
 
-    // Step 3: Send emails in batches
+    // Step 3: Send emails in batches (with chunking to respect Vercel timeout)
     let totalSent = 0;
     const baseUrl =
       process.env.NEXT_PUBLIC_APP_URL ||
       process.env.NEXT_PUBLIC_SITE_URL ||
       "http://localhost:3000";
 
-    // Process in batches
+    // Process in batches, but limit to MAX_BATCHES_PER_RUN to stay within timeout
     const totalBatches = Math.ceil(unsentContacts.length / BATCH_SIZE);
+    const batchesToProcess = Math.min(totalBatches, MAX_BATCHES_PER_RUN);
 
-    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    console.log(
+      `📦 Processing ${batchesToProcess} batches (of ${totalBatches} total) in this run`
+    );
+
+    for (let batchIndex = 0; batchIndex < batchesToProcess; batchIndex++) {
       const batchStart = batchIndex * BATCH_SIZE;
       const batchEnd = Math.min(batchStart + BATCH_SIZE, unsentContacts.length);
       const batchContacts = unsentContacts.slice(batchStart, batchEnd);
@@ -373,7 +398,7 @@ export const sendCampaignFunction = inngest.createFunction(
       // Removed: step.sleep() for faster execution
     }
 
-    // Check if campaign is complete
+    // Check if there are more batches to process
     const finalStats = await step.run("check-completion", async () => {
       return await getCampaignSendStats(campaignId);
     });
@@ -381,7 +406,41 @@ export const sendCampaignFunction = inngest.createFunction(
     const totalProcessed =
       finalStats.sent + finalStats.failed + finalStats.bounced;
 
-    if (totalProcessed >= allContacts.length && finalStats.pending === 0) {
+    console.log(
+      `📊 Progress: ${finalStats.sent}/${allContactIds.length} sent, ${finalStats.pending} pending`
+    );
+
+    // If we hit our batch limit AND there are still unsent/pending contacts, trigger continuation
+    if (
+      batchesToProcess === MAX_BATCHES_PER_RUN &&
+      (finalStats.pending > 0 || totalProcessed < allContactIds.length)
+    ) {
+      await step.run("trigger-continuation", async () => {
+        const remaining = allContactIds.length - totalProcessed;
+        console.log(
+          `🔄 Triggering continuation to process remaining ~${remaining} contacts...`
+        );
+        await inngest.send({
+          name: "campaign/send",
+          data: {
+            campaignId,
+            campaign,
+          },
+        });
+      });
+
+      return {
+        success: true,
+        completed: false,
+        sent: finalStats.sent,
+        pending: finalStats.pending,
+        total: allContactIds.length,
+        message: `Processed ${batchesToProcess} batches, continuation triggered for remaining contacts`,
+      };
+    }
+
+    // Check if campaign is fully complete
+    if (totalProcessed >= allContactIds.length && finalStats.pending === 0) {
       // Mark campaign as complete
       await step.run("mark-complete", async () => {
         const { cosmic } = await import("@/lib/cosmic");
@@ -413,7 +472,7 @@ export const sendCampaignFunction = inngest.createFunction(
         completed: true,
         sent: finalStats.sent,
         failed: finalStats.failed,
-        total: allContacts.length,
+        total: allContactIds.length,
       };
     }
 
@@ -422,7 +481,7 @@ export const sendCampaignFunction = inngest.createFunction(
       completed: false,
       sent: finalStats.sent,
       pending: finalStats.pending,
-      total: allContacts.length,
+      total: allContactIds.length,
     };
   }
 );

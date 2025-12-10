@@ -252,6 +252,22 @@ export default function CreateCampaignForm({
     }))
   }
 
+  // Changed: Added function to select all lists
+  const handleSelectAllLists = () => {
+    setFormData(prev => ({
+      ...prev,
+      list_ids: lists.map(list => list.id)
+    }))
+  }
+
+  // Changed: Added function to deselect all lists
+  const handleDeselectAllLists = () => {
+    setFormData(prev => ({
+      ...prev,
+      list_ids: []
+    }))
+  }
+
   const handleContactToggle = (contactId: string, checked: boolean) => {
     setFormData(prev => ({
       ...prev,
@@ -409,9 +425,37 @@ export default function CreateCampaignForm({
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <Label>Select Email Lists</Label>
-                      <Badge variant="outline">
-                        {formData.list_ids.length} selected
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">
+                          {formData.list_ids.length} selected
+                        </Badge>
+                        {/* Changed: Added Select All / Deselect All buttons */}
+                        {lists.length > 0 && (
+                          <div className="flex gap-2">
+                            {formData.list_ids.length === lists.length ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={handleDeselectAllLists}
+                                className="h-7 text-xs"
+                              >
+                                Deselect All
+                              </Button>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={handleSelectAllLists}
+                                className="h-7 text-xs"
+                              >
+                                Select All
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     
                     {lists.length === 0 ? (

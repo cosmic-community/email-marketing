@@ -353,6 +353,22 @@ export default function EditCampaignForm({
     }));
   };
 
+  // Changed: Added function to select all lists
+  const handleSelectAllLists = () => {
+    setFormData((prev) => ({
+      ...prev,
+      list_ids: lists.map((list) => list.id),
+    }));
+  };
+
+  // Changed: Added function to deselect all lists
+  const handleDeselectAllLists = () => {
+    setFormData((prev) => ({
+      ...prev,
+      list_ids: [],
+    }));
+  };
+
   const handleContactSelect = (contactId: string, checked: boolean) => {
     setFormData((prev) => ({
       ...prev,
@@ -505,9 +521,37 @@ export default function EditCampaignForm({
                 <Label className="text-sm font-medium">
                   Select Email Lists
                 </Label>
-                <span className="text-sm text-gray-500">
-                  {formData.list_ids.length} selected
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-500">
+                    {formData.list_ids.length} selected
+                  </span>
+                  {/* Changed: Added Select All / Deselect All buttons */}
+                  {lists.length > 0 && canEdit && (
+                    <div className="flex gap-2">
+                      {formData.list_ids.length === lists.length ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleDeselectAllLists}
+                          className="h-7 text-xs"
+                        >
+                          Deselect All
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSelectAllLists}
+                          className="h-7 text-xs"
+                        >
+                          Select All
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {lists.length === 0 ? (

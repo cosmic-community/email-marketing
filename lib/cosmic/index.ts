@@ -11,6 +11,7 @@ export { hasStatus, withTimeout } from "./utils";
 export {
   reserveContactsForSending,
   createCampaignSend,
+  batchUpdateCampaignSends,
   hasContactBeenSent,
   getSentContactIds,
   getCampaignSendStats,
@@ -18,6 +19,7 @@ export {
   getCampaignTrackingStats,
   syncCampaignTrackingStats,
 } from "./campaign-sends";
+export type { BatchSendUpdate } from "./campaign-sends";
 
 // Upload Jobs
 export {

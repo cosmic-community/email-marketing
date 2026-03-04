@@ -47,8 +47,61 @@ async function checkContactsAlreadySent(
   }
 }
 
-// UPDATED: Atomic reservation with BATCH pre-check and reduced concurrency
-// OPTIMIZED: Dramatically reduced MongoDB load
+const RESERVATION_CONCURRENCY = 10;
+const RESERVATION_DELAY_MS = 20;
+
+async function reserveSingleContact(
+  campaignId: string,
+  contact: EmailContact
+): Promise<{ contact: EmailContact; recordId: string } | null> {
+  try {
+    // Check if a send record already exists (duplicate prevention since Cosmic
+    // auto-appends UUIDs to duplicate slugs and doesn't enforce uniqueness)
+    try {
+      const { objects: existingRecords } = await cosmic.objects
+        .find({
+          type: "campaign-sends",
+          "metadata.campaign": campaignId,
+          "metadata.contact": contact.id,
+        })
+        .props(["id"])
+        .limit(1);
+
+      if (existingRecords.length > 0) {
+        return null;
+      }
+    } catch (checkError: any) {
+      if (!hasStatus(checkError) || checkError.status !== 404) {
+        console.error(
+          `Error checking existing send record for contact ${contact.id}:`,
+          checkError.message
+        );
+        return null;
+      }
+    }
+
+    const uniqueSlug = `send-${campaignId}-${contact.id}`;
+    const { object } = await cosmic.objects.insertOne({
+      type: "campaign-sends",
+      title: `Send: Campaign ${campaignId} to ${contact.metadata.email}`,
+      slug: uniqueSlug,
+      metadata: {
+        campaign: campaignId,
+        contact: contact.id,
+        contact_email: contact.metadata.email,
+        status: "pending",
+        reserved_at: new Date().toISOString(),
+        retry_count: 0,
+      },
+    });
+
+    return { contact, recordId: object.id };
+  } catch (error: any) {
+    console.error(`Error reserving contact ${contact.id}:`, error.message);
+    return null;
+  }
+}
+
 export async function reserveContactsForSending(
   campaignId: string,
   contacts: EmailContact[],
@@ -62,10 +115,10 @@ export async function reserveContactsForSending(
 
   const targetBatchSize = Math.min(batchSize, contacts.length);
   console.log(
-    `🔒 Reserving ${targetBatchSize} contacts for campaign ${campaignId} (batch check + reduced concurrency)...`
+    `Reserving ${targetBatchSize} contacts for campaign ${campaignId}...`
   );
 
-  // OPTIMIZATION 1: Batch pre-check all contacts at once (1 query instead of 50)
+  // Batch pre-check all contacts at once (1 query instead of N)
   const contactEmails = contacts
     .slice(0, batchSize)
     .map((c) => c.metadata.email);
@@ -74,94 +127,41 @@ export async function reserveContactsForSending(
     contactEmails
   );
 
-  // Filter out already-sent contacts BEFORE attempting reservations
   const contactsToReserve = contacts
     .slice(0, batchSize)
     .filter((c) => !alreadySentEmails.has(c.metadata.email));
 
   console.log(
-    `📋 After filtering: ${contactsToReserve.length}/${targetBatchSize} contacts need reservation`
+    `After filtering: ${contactsToReserve.length}/${targetBatchSize} contacts need reservation`
   );
 
   if (contactsToReserve.length === 0) {
-    console.log(`⊗ All contacts already have send records`);
     return { reserved, pendingRecordIds };
   }
 
-  // OPTIMIZATION 2: Balanced delay for Cosmic API limits (100 req/sec)
-  // With 100 contacts per batch: 201 requests over 5 seconds = 40 req/sec (40% of Cosmic limit)
-  const RESERVATION_DELAY = 50; // Optimized for Cosmic's 100 req/sec limit
-  let processedCount = 0;
+  // Process reservations in parallel groups of RESERVATION_CONCURRENCY
+  for (let i = 0; i < contactsToReserve.length; i += RESERVATION_CONCURRENCY) {
+    const chunk = contactsToReserve.slice(i, i + RESERVATION_CONCURRENCY);
 
-  // CRITICAL FIX: Process reservations with check-before-insert to prevent duplicates
-  // NOTE: Cosmic auto-appends UUIDs to duplicate slugs, so we MUST check for existing records
-  for (const contact of contactsToReserve) {
-    try {
-      // STEP 1: Check if a send record already exists for this campaign+contact
-      // This is our REAL duplicate prevention since Cosmic doesn't enforce unique slugs
-      try {
-        const { objects: existingRecords } = await cosmic.objects
-          .find({
-            type: "campaign-sends",
-            "metadata.campaign": campaignId,
-            "metadata.contact": contact.id,
-          })
-          .props(["id"])
-          .limit(1);
+    const results = await Promise.all(
+      chunk.map((contact) => reserveSingleContact(campaignId, contact))
+    );
 
-        if (existingRecords.length > 0) {
-          // Already reserved by another process - skip
-          console.log(
-            `⏭️  Contact ${contact.id} already has send record, skipping`
-          );
-          continue;
-        }
-      } catch (checkError: any) {
-        // 404 means no record exists, which is what we want
-        if (!hasStatus(checkError) || checkError.status !== 404) {
-          console.error(
-            `Error checking existing send record for contact ${contact.id}:`,
-            checkError.message
-          );
-          continue; // Skip this contact on error to be safe
-        }
+    for (const result of results) {
+      if (result) {
+        reserved.push(result.contact);
+        pendingRecordIds.set(result.contact.id, result.recordId);
       }
-
-      // STEP 2: No existing record found, safe to insert
-      const uniqueSlug = `send-${campaignId}-${contact.id}`;
-
-      const { object } = await cosmic.objects.insertOne({
-        type: "campaign-sends",
-        title: `Send: Campaign ${campaignId} to ${contact.metadata.email}`,
-        slug: uniqueSlug,
-        metadata: {
-          campaign: campaignId,
-          contact: contact.id,
-          contact_email: contact.metadata.email,
-          status: "pending",
-          reserved_at: new Date().toISOString(),
-          retry_count: 0,
-        },
-      });
-
-      // Successfully reserved
-      reserved.push(contact);
-      pendingRecordIds.set(contact.id, object.id);
-    } catch (error: any) {
-      // Log insertion errors but continue
-      console.error(`✗ Error reserving contact ${contact.id}:`, error.message);
-      continue;
     }
 
-    // OPTIMIZATION 3: Longer delay between reservations (150ms vs 50ms)
-    processedCount++;
-    if (processedCount < contactsToReserve.length) {
-      await new Promise((resolve) => setTimeout(resolve, RESERVATION_DELAY));
+    // Small delay between concurrent groups to stay within Cosmic rate limits
+    if (i + RESERVATION_CONCURRENCY < contactsToReserve.length) {
+      await new Promise((resolve) => setTimeout(resolve, RESERVATION_DELAY_MS));
     }
   }
 
   console.log(
-    `✅ Successfully reserved ${reserved.length}/${targetBatchSize} contacts`
+    `Reserved ${reserved.length}/${targetBatchSize} contacts`
   );
 
   return { reserved, pendingRecordIds };
@@ -249,6 +249,51 @@ export async function createCampaignSend(data: {
   } catch (error) {
     console.error("❌ ERROR in createCampaignSend:", error);
     throw new Error("Failed to create/update campaign send record");
+  }
+}
+
+const BATCH_UPDATE_CONCURRENCY = 10;
+
+export interface BatchSendUpdate {
+  campaignId: string;
+  contactId: string;
+  contactEmail: string;
+  status: "sent" | "failed" | "bounced";
+  resendMessageId?: string;
+  errorMessage?: string;
+  pendingRecordId?: string;
+}
+
+/**
+ * Update multiple campaign-send records in parallel (groups of 10).
+ * Used after a batch send to record results without blocking serially.
+ */
+export async function batchUpdateCampaignSends(
+  updates: BatchSendUpdate[]
+): Promise<void> {
+  if (updates.length === 0) return;
+
+  for (let i = 0; i < updates.length; i += BATCH_UPDATE_CONCURRENCY) {
+    const chunk = updates.slice(i, i + BATCH_UPDATE_CONCURRENCY);
+
+    await Promise.all(
+      chunk.map((update) =>
+        createCampaignSend({
+          campaignId: update.campaignId,
+          contactId: update.contactId,
+          contactEmail: update.contactEmail,
+          status: update.status,
+          resendMessageId: update.resendMessageId,
+          errorMessage: update.errorMessage,
+          pendingRecordId: update.pendingRecordId,
+        }).catch((error) => {
+          console.error(
+            `Failed to update send record for ${update.contactEmail}:`,
+            error.message
+          );
+        })
+      )
+    );
   }
 }
 

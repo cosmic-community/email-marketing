@@ -7,63 +7,32 @@ import {
   filterUnsentContacts,
   getCampaignTargetContacts,
   reserveContactsForSending,
-  createCampaignSend,
+  batchUpdateCampaignSends,
   syncCampaignTrackingStats,
 } from "@/lib/cosmic";
-import { sendEmail, ResendRateLimitError } from "@/lib/resend";
-import { createUnsubscribeUrl } from "@/lib/email-tracking";
+import type { BatchSendUpdate } from "@/lib/cosmic";
+import {
+  sendEmailBatch,
+  ResendRateLimitError,
+} from "@/lib/resend";
+import type { BatchEmailPayload } from "@/lib/resend";
+import { createUnsubscribeUrl, addTrackingToEmail } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
-// Rate limiting configuration - OPTIMIZED for Vercel timeout limits
-// Cosmic API limits: 100 req/sec rate limit, 200 burst limit
-// Resend API limits: 10 emails/sec
-// Vercel limits: 300 second maxDuration (5 minutes)
-const EMAILS_PER_SECOND = 9; // 90% of 10/sec Resend limit (safer margin)
-const MIN_DELAY_MS = Math.ceil(1000 / EMAILS_PER_SECOND); // ~111ms per email
-const BATCH_SIZE = 100; // BALANCED: 100 contacts per batch (~20s each = safer for timeouts)
-const PARALLEL_LIMIT = 9; // Match Resend rate limit exactly (9 emails/sec)
-const MAX_BATCHES_PER_RUN = 12; // Process 12 batches per function run (~4 min) then continue
-const DELAY_BETWEEN_BATCHES = 0; // No delay needed (rate limiting handled within batches)
+// Resend batch API: max 100 emails per call
+const BATCH_SIZE = 100;
+// Process 20 batches per Inngest run (2,000 contacts) then trigger continuation
+// 20 batches x ~10s each = ~200s, safely under Vercel 300s limit
+const MAX_BATCHES_PER_RUN = 20;
 
-// Helper function to process promises with concurrency limit
-async function processWithConcurrencyLimit<T, R>(
-  items: T[],
-  limit: number,
-  delayMs: number,
-  processor: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = [];
-
-  for (let i = 0; i < items.length; i += limit) {
-    const batch = items.slice(i, i + limit);
-
-    // Process batch in parallel
-    const batchPromises = batch.map((item, batchIndex) =>
-      processor(item, i + batchIndex)
-    );
-
-    const batchResults = await Promise.all(batchPromises);
-    results.push(...batchResults);
-
-    // Add delay between concurrent batches to respect rate limit
-    if (i + limit < items.length) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs * limit));
-    }
-  }
-
-  return results;
-}
-
-// Inngest background function - Optimized for large campaigns
 export const sendCampaignFunction = inngest.createFunction(
   {
     id: "send-campaign",
     name: "Send Email Campaign",
     concurrency: {
-      // Only process one campaign at a time to respect rate limits
       limit: 1,
     },
-    retries: 3, // Auto-retry on failure
+    retries: 3,
   },
   { event: "campaign/send" },
   async ({ event, step }) => {
@@ -72,16 +41,12 @@ export const sendCampaignFunction = inngest.createFunction(
       campaign: MarketingCampaign;
     };
 
-    console.log(`📧 [INNGEST] Starting campaign send: ${campaignId}`);
-    console.log(
-      `📊 [INNGEST] Campaign current status: ${campaign.metadata.status?.value}`
-    );
+    const runTimestamp = Date.now();
 
-    // Safety net: Ensure campaign status is "Sending" when function starts
-    // This catches cases where the API endpoint status update failed
+    console.log(`[INNGEST] Starting campaign send: ${campaignId}`);
+
     if (campaign.metadata.status?.value !== "Sending") {
       await step.run("ensure-sending-status", async () => {
-        console.log(`⚠️  Campaign status is not "Sending", updating now...`);
         await updateCampaignStatus(campaignId, "Sending", {
           sent: campaign.metadata.stats?.sent || 0,
           delivered: campaign.metadata.stats?.delivered || 0,
@@ -92,13 +57,10 @@ export const sendCampaignFunction = inngest.createFunction(
           open_rate: campaign.metadata.stats?.open_rate || "0%",
           click_rate: campaign.metadata.stats?.click_rate || "0%",
         });
-        console.log(`✅ Status updated to "Sending" from Inngest function`);
       });
     }
 
-    // Step 1: Get settings
     const settings = await step.run("get-settings", async () => {
-      console.log(`⚙️  Fetching email settings...`);
       return await getSettings();
     });
 
@@ -106,61 +68,37 @@ export const sendCampaignFunction = inngest.createFunction(
       throw new Error("Email settings not configured");
     }
 
-    // Step 2: Fetch and filter contacts (combined to minimize steps and avoid blocking)
-    // Only return unsent contact IDs to stay under 512KB step output limit
-    const { allContactIds, unsentContactIds } = await step.run(
-      "fetch-and-filter-contacts",
-      async () => {
-        console.log(`📋 Fetching target contacts for campaign ${campaignId}...`);
-        const contacts = await getCampaignTargetContacts(campaign, {
-          maxContactsPerList: 15000,
-          totalMaxContacts: 100000,
-        });
-        console.log(`📊 Total target contacts: ${contacts.length}`);
-
-        console.log(`🔍 Filtering unsent contacts...`);
-        const unsentIds = await filterUnsentContacts(campaignId, contacts);
-        console.log(
-          `✅ ${unsentIds.length} contacts remaining to send (${contacts.length - unsentIds.length
-          } already sent)`
-        );
-
-        // Return only IDs to stay under 512KB limit
-        return {
-          allContactIds: contacts.map((c) => c.id),
-          unsentContactIds: unsentIds,
-        };
-      }
-    );
-
-    // Re-fetch only the contacts we need (much faster as it's a smaller filtered set)
-    console.log(`📋 Re-fetching ${unsentContactIds.length} unsent contacts...`);
+    // Fetch all contacts ONCE (not duplicated across steps)
     const allContacts = await getCampaignTargetContacts(campaign, {
       maxContactsPerList: 15000,
       totalMaxContacts: 100000,
     });
+    console.log(`Total target contacts: ${allContacts.length}`);
 
-    const unsentContacts = allContacts.filter((c) =>
-      unsentContactIds.includes(c.id)
+    // Filter unsent inside a step (DB query, retriable)
+    const unsentContactIds = await step.run(
+      "filter-unsent-contacts",
+      async () => {
+        const ids = await filterUnsentContacts(campaignId, allContacts);
+        console.log(
+          `${ids.length} contacts remaining to send (${allContacts.length - ids.length} already sent)`
+        );
+        return ids;
+      }
     );
 
-    console.log(
-      `✅ ${unsentContacts.length} contacts remaining to send (${allContacts.length - unsentContacts.length
-      } already sent)`
-    );
+    // Build unsent contacts list from already-fetched data
+    const unsentIdSet = new Set(unsentContactIds);
+    const unsentContacts = allContacts.filter((c) => unsentIdSet.has(c.id));
 
     if (unsentContacts.length === 0) {
-      // Campaign is complete!
       const freshStats = await getCampaignSendStats(campaignId);
 
       await step.run("mark-campaign-complete", async () => {
         const { cosmic } = await import("@/lib/cosmic");
         await cosmic.objects.updateOne(campaignId, {
           metadata: {
-            status: {
-              key: "sent",
-              value: "Sent",
-            },
+            status: { key: "sent", value: "Sent" },
             stats: {
               sent: freshStats.sent,
               delivered: freshStats.sent,
@@ -174,8 +112,6 @@ export const sendCampaignFunction = inngest.createFunction(
             sent_at: new Date().toISOString(),
           },
         });
-
-        // Sync tracking stats
         await syncCampaignTrackingStats(campaignId);
       });
 
@@ -187,19 +123,21 @@ export const sendCampaignFunction = inngest.createFunction(
       };
     }
 
-    // Step 3: Send emails in batches (with chunking to respect Vercel timeout)
-    let totalSent = 0;
     const baseUrl =
       process.env.NEXT_PUBLIC_APP_URL ||
       process.env.NEXT_PUBLIC_SITE_URL ||
       "http://localhost:3000";
 
-    // Process in batches, but limit to MAX_BATCHES_PER_RUN to stay within timeout
+    const fromAddress = `${settings.metadata.from_name} <${settings.metadata.from_email}>`;
+    const replyTo = settings.metadata.reply_to_email || settings.metadata.from_email;
+    const emailContent = campaign.metadata.campaign_content?.content || "";
+    const emailSubject = campaign.metadata.campaign_content?.subject || "";
+
     const totalBatches = Math.ceil(unsentContacts.length / BATCH_SIZE);
     const batchesToProcess = Math.min(totalBatches, MAX_BATCHES_PER_RUN);
 
     console.log(
-      `📦 Processing ${batchesToProcess} batches (of ${totalBatches} total) in this run`
+      `Processing ${batchesToProcess} batches (of ${totalBatches} total) in this run`
     );
 
     for (let batchIndex = 0; batchIndex < batchesToProcess; batchIndex++) {
@@ -209,11 +147,10 @@ export const sendCampaignFunction = inngest.createFunction(
 
       await step.run(`batch-${batchIndex}`, async () => {
         console.log(
-          `📦 Processing batch ${batchIndex + 1}/${totalBatches} (${batchContacts.length
-          } contacts)`
+          `Batch ${batchIndex + 1}/${totalBatches} (${batchContacts.length} contacts)`
         );
 
-        // Reserve contacts atomically
+        // Reserve contacts with parallel check+insert
         const { reserved: reservedContacts, pendingRecordIds } =
           await reserveContactsForSending(
             campaignId,
@@ -222,158 +159,131 @@ export const sendCampaignFunction = inngest.createFunction(
           );
 
         if (reservedContacts.length === 0) {
-          console.log(`⚠️  No contacts reserved in this batch`);
+          console.log(`No contacts reserved in batch ${batchIndex}`);
           return 0;
         }
 
-        // OPTIMIZED: Send emails with controlled concurrency (respects rate limit)
-        // Process PARALLEL_LIMIT emails at a time with proper delays between batches
-        console.log(
-          `🚀 Sending ${reservedContacts.length} emails with concurrency limit of ${PARALLEL_LIMIT} (${EMAILS_PER_SECOND}/sec)...`
-        );
+        // Build personalized email payloads for batch send
+        const payloads: BatchEmailPayload[] = [];
+        const payloadContactMap: EmailContact[] = [];
 
-        const results = await processWithConcurrencyLimit(
-          reservedContacts,
-          PARALLEL_LIMIT,
-          MIN_DELAY_MS,
-          async (contact, index) => {
-            const pendingRecordId = pendingRecordIds.get(contact.id);
+        for (const contact of reservedContacts) {
+          let personalizedContent = emailContent.replace(
+            /\{\{first_name\}\}/g,
+            contact.metadata.first_name || "there"
+          );
+          let personalizedSubject = emailSubject.replace(
+            /\{\{first_name\}\}/g,
+            contact.metadata.first_name || "there"
+          );
 
-            try {
-              // Get campaign content
-              const emailContent =
-                campaign.metadata.campaign_content?.content || "";
-              const emailSubject =
-                campaign.metadata.campaign_content?.subject || "";
-
-              // Personalize content
-              let personalizedContent = emailContent.replace(
-                /\{\{first_name\}\}/g,
-                contact.metadata.first_name || "there"
-              );
-              let personalizedSubject = emailSubject.replace(
-                /\{\{first_name\}\}/g,
-                contact.metadata.first_name || "there"
-              );
-
-              // Add View in Browser link if enabled
-              if (campaign.metadata.public_sharing_enabled) {
-                const viewInBrowserUrl = `${baseUrl}/public/campaigns/${campaignId}`;
-                const viewInBrowserLink = `
-                  <div style="text-align: center; padding: 10px 0; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
-                    <a href="${viewInBrowserUrl}" 
-                       style="color: #6b7280; font-size: 12px; text-decoration: underline;">
-                      View this email in your browser
-                    </a>
-                  </div>
-                `;
-                personalizedContent = viewInBrowserLink + personalizedContent;
-              }
-
-              // Add unsubscribe footer
-              const unsubscribeUrl = createUnsubscribeUrl(
-                contact.metadata.email,
-                baseUrl,
-                campaignId
-              );
-
-              const unsubscribeFooter = `
-                <div style="margin-top: 40px; padding: 20px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #6b7280;">
-                  <p style="margin: 0 0 10px 0;">
-                    You received this email because you subscribed to our mailing list.
-                  </p>
-                  <p style="margin: 0 0 10px 0;">
-                    <a href="${unsubscribeUrl}" style="color: #6b7280; text-decoration: underline;">Unsubscribe</a> from future emails.
-                  </p>
-                </div>
-              `;
-
-              personalizedContent += unsubscribeFooter;
-
-              // Send email
-              const result = await sendEmail({
-                from: `${settings.metadata.from_name} <${settings.metadata.from_email}>`,
-                to: contact.metadata.email,
-                subject: personalizedSubject,
-                html: personalizedContent,
-                reply_to:
-                  settings.metadata.reply_to_email ||
-                  settings.metadata.from_email,
-                campaignId: campaignId,
-                contactId: contact.id,
-                headers: {
-                  "X-Campaign-ID": campaignId,
-                  "X-Contact-ID": contact.id,
-                  "List-Unsubscribe": `<${unsubscribeUrl}>`,
-                  "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-                },
-              });
-
-              console.log(`✅ Sent to ${contact.metadata.email}`);
-
-              // Update record to "sent"
-              await createCampaignSend({
-                campaignId: campaignId,
-                contactId: contact.id,
-                contactEmail: contact.metadata.email,
-                status: "sent",
-                resendMessageId: result.id,
-                pendingRecordId: pendingRecordId,
-              });
-
-              return { success: true, email: contact.metadata.email };
-            } catch (error: any) {
-              // Check for rate limit error
-              if (
-                error instanceof ResendRateLimitError ||
-                error.message?.toLowerCase().includes("rate limit") ||
-                error.message?.toLowerCase().includes("too many requests") ||
-                error.statusCode === 429
-              ) {
-                const retryAfter = error.retryAfter || 3600;
-                console.log(
-                  `⚠️  Rate limit hit! Will retry after ${retryAfter}s`
-                );
-
-                // Inngest will automatically retry this step
-                throw new Error(
-                  `Rate limit hit. Retry after ${retryAfter} seconds`
-                );
-              }
-
-              // Regular error - mark as failed
-              console.error(
-                `❌ Failed to send to ${contact.metadata.email}:`,
-                error.message
-              );
-
-              await createCampaignSend({
-                campaignId: campaignId,
-                contactId: contact.id,
-                contactEmail: contact.metadata.email,
-                status: "failed",
-                errorMessage: error.message,
-                pendingRecordId: pendingRecordId,
-              });
-
-              return {
-                success: false,
-                email: contact.metadata.email,
-                error: error.message,
-              };
-            }
+          if (campaign.metadata.public_sharing_enabled) {
+            const viewInBrowserUrl = `${baseUrl}/public/campaigns/${campaignId}`;
+            personalizedContent = `
+              <div style="text-align: center; padding: 10px 0; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
+                <a href="${viewInBrowserUrl}" 
+                   style="color: #6b7280; font-size: 12px; text-decoration: underline;">
+                  View this email in your browser
+                </a>
+              </div>
+            ` + personalizedContent;
           }
-        );
 
-        // Process results
-        const batchSent = results.filter((r) => r.success).length;
-        const batchFailed = results.filter((r) => !r.success).length;
+          const unsubscribeUrl = createUnsubscribeUrl(
+            contact.metadata.email,
+            baseUrl,
+            campaignId
+          );
 
-        console.log(
-          `📊 Batch complete: ${batchSent} sent, ${batchFailed} failed`
-        );
+          personalizedContent += `
+            <div style="margin-top: 40px; padding: 20px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #6b7280;">
+              <p style="margin: 0 0 10px 0;">
+                You received this email because you subscribed to our mailing list.
+              </p>
+              <p style="margin: 0 0 10px 0;">
+                <a href="${unsubscribeUrl}" style="color: #6b7280; text-decoration: underline;">Unsubscribe</a> from future emails.
+              </p>
+            </div>
+          `;
 
-        // Update progress after batch
+          // Apply click tracking
+          const trackedContent = addTrackingToEmail(
+            personalizedContent,
+            campaignId,
+            contact.id,
+            baseUrl
+          );
+
+          payloads.push({
+            from: fromAddress,
+            to: contact.metadata.email,
+            subject: personalizedSubject,
+            html: trackedContent,
+            reply_to: replyTo,
+            headers: {
+              "X-Campaign-ID": campaignId,
+              "X-Contact-ID": contact.id,
+              "List-Unsubscribe": `<${unsubscribeUrl}>`,
+              "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            },
+          });
+          payloadContactMap.push(contact);
+        }
+
+        // Send entire batch in one Resend API call with idempotency key
+        const idempotencyKey = `campaign-${campaignId}-batch-${batchIndex}-${runTimestamp}`;
+
+        try {
+          const batchResult = await sendEmailBatch(payloads, idempotencyKey);
+
+          // Build update records for all successful sends
+          const updates: BatchSendUpdate[] = payloadContactMap.map(
+            (contact, i) => ({
+              campaignId,
+              contactId: contact.id,
+              contactEmail: contact.metadata.email,
+              status: "sent" as const,
+              resendMessageId: batchResult.data[i]?.id || "",
+              pendingRecordId: pendingRecordIds.get(contact.id),
+            })
+          );
+
+          // Update all send records in parallel (groups of 10)
+          await batchUpdateCampaignSends(updates);
+
+          console.log(`Batch ${batchIndex + 1}: ${updates.length} sent`);
+        } catch (error: any) {
+          if (
+            error instanceof ResendRateLimitError ||
+            error.message?.toLowerCase().includes("rate limit") ||
+            error.statusCode === 429
+          ) {
+            console.log(
+              `Rate limit hit on batch ${batchIndex}. Inngest will retry.`
+            );
+            throw error;
+          }
+
+          // On non-rate-limit batch failure, mark all contacts in this batch as failed
+          console.error(
+            `Batch ${batchIndex + 1} failed:`,
+            error.message
+          );
+
+          const failUpdates: BatchSendUpdate[] = payloadContactMap.map(
+            (contact) => ({
+              campaignId,
+              contactId: contact.id,
+              contactEmail: contact.metadata.email,
+              status: "failed" as const,
+              errorMessage: error.message,
+              pendingRecordId: pendingRecordIds.get(contact.id),
+            })
+          );
+          await batchUpdateCampaignSends(failUpdates);
+        }
+
+        // Update progress
         const freshStats = await getCampaignSendStats(campaignId);
         const progressPercentage = Math.round(
           (freshStats.sent / allContacts.length) * 100
@@ -387,18 +297,11 @@ export const sendCampaignFunction = inngest.createFunction(
           last_batch_completed: new Date().toISOString(),
         });
 
-        console.log(
-          `📊 Batch complete: ${batchSent} sent, ${freshStats.sent}/${allContacts.length} total (${progressPercentage}%)`
-        );
-
-        return batchSent;
+        return freshStats.sent;
       });
-
-      // OPTIMIZED: No delay between batches needed (rate limiting handled within batch processing)
-      // Removed: step.sleep() for faster execution
     }
 
-    // Check if there are more batches to process
+    // Check completion
     const finalStats = await step.run("check-completion", async () => {
       return await getCampaignSendStats(campaignId);
     });
@@ -407,25 +310,22 @@ export const sendCampaignFunction = inngest.createFunction(
       finalStats.sent + finalStats.failed + finalStats.bounced;
 
     console.log(
-      `📊 Progress: ${finalStats.sent}/${allContactIds.length} sent, ${finalStats.pending} pending`
+      `Progress: ${finalStats.sent}/${allContacts.length} sent, ${finalStats.pending} pending`
     );
 
-    // If we hit our batch limit AND there are still unsent/pending contacts, trigger continuation
+    // Trigger continuation if more contacts remain
     if (
       batchesToProcess === MAX_BATCHES_PER_RUN &&
-      (finalStats.pending > 0 || totalProcessed < allContactIds.length)
+      (finalStats.pending > 0 || totalProcessed < allContacts.length)
     ) {
       await step.run("trigger-continuation", async () => {
-        const remaining = allContactIds.length - totalProcessed;
+        const remaining = allContacts.length - totalProcessed;
         console.log(
-          `🔄 Triggering continuation to process remaining ~${remaining} contacts...`
+          `Triggering continuation for remaining ~${remaining} contacts...`
         );
         await inngest.send({
           name: "campaign/send",
-          data: {
-            campaignId,
-            campaign,
-          },
+          data: { campaignId, campaign },
         });
       });
 
@@ -434,22 +334,18 @@ export const sendCampaignFunction = inngest.createFunction(
         completed: false,
         sent: finalStats.sent,
         pending: finalStats.pending,
-        total: allContactIds.length,
-        message: `Processed ${batchesToProcess} batches, continuation triggered for remaining contacts`,
+        total: allContacts.length,
+        message: `Processed ${batchesToProcess} batches, continuation triggered`,
       };
     }
 
-    // Check if campaign is fully complete
-    if (totalProcessed >= allContactIds.length && finalStats.pending === 0) {
-      // Mark campaign as complete
+    // Campaign fully complete
+    if (totalProcessed >= allContacts.length && finalStats.pending === 0) {
       await step.run("mark-complete", async () => {
         const { cosmic } = await import("@/lib/cosmic");
         await cosmic.objects.updateOne(campaignId, {
           metadata: {
-            status: {
-              key: "sent",
-              value: "Sent",
-            },
+            status: { key: "sent", value: "Sent" },
             stats: {
               sent: finalStats.sent,
               delivered: finalStats.sent,
@@ -463,7 +359,6 @@ export const sendCampaignFunction = inngest.createFunction(
             sent_at: new Date().toISOString(),
           },
         });
-
         await syncCampaignTrackingStats(campaignId);
       });
 
@@ -472,7 +367,7 @@ export const sendCampaignFunction = inngest.createFunction(
         completed: true,
         sent: finalStats.sent,
         failed: finalStats.failed,
-        total: allContactIds.length,
+        total: allContacts.length,
       };
     }
 
@@ -481,7 +376,7 @@ export const sendCampaignFunction = inngest.createFunction(
       completed: false,
       sent: finalStats.sent,
       pending: finalStats.pending,
-      total: allContactIds.length,
+      total: allContacts.length,
     };
   }
 );

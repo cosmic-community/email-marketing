@@ -40,6 +40,102 @@ export class ResendRateLimitError extends Error {
   }
 }
 
+export interface BatchEmailPayload {
+  from: string;
+  to: string | string[];
+  subject: string;
+  html?: string;
+  text?: string;
+  reply_to?: string;
+  headers?: Record<string, string>;
+}
+
+export interface BatchSendResult {
+  data: { id: string }[];
+}
+
+/**
+ * Send up to 100 emails in a single Resend API call.
+ * Uses idempotency keys to prevent duplicate sends on retry.
+ */
+export async function sendEmailBatch(
+  emails: BatchEmailPayload[],
+  idempotencyKey?: string
+): Promise<BatchSendResult> {
+  if (emails.length === 0) {
+    return { data: [] };
+  }
+  if (emails.length > 100) {
+    throw new Error("Resend batch API supports a maximum of 100 emails per call");
+  }
+
+  try {
+    const payloads = emails.map((email) => {
+      const textContent =
+        email.text ||
+        (email.html ? email.html.replace(/<[^>]*>/g, "") : email.subject);
+      return {
+        from: email.from,
+        to: email.to,
+        subject: email.subject,
+        html: email.html,
+        text: textContent,
+        replyTo: email.reply_to,
+        headers: email.headers,
+      };
+    });
+
+    const result = await resend.batch.send(
+      payloads,
+      idempotencyKey ? { idempotencyKey } : undefined
+    );
+
+    if (result.error) {
+      const errorMessage = result.error.message || "";
+      const isRateLimit =
+        errorMessage.toLowerCase().includes("rate limit") ||
+        errorMessage.toLowerCase().includes("too many requests") ||
+        errorMessage.includes("429");
+
+      if (isRateLimit) {
+        const retryMatch = errorMessage.match(/retry after (\d+)/i);
+        const retryAfter = retryMatch ? parseInt(retryMatch[1] ?? "3600") : 3600;
+        console.error("Resend batch rate limit error:", errorMessage);
+        throw new ResendRateLimitError("Resend batch API rate limit exceeded", retryAfter);
+      }
+
+      throw new Error(errorMessage || "Resend batch send failed");
+    }
+
+    const batchData = result.data?.data || [];
+    return {
+      data: batchData.map((d) => ({ id: d.id || "" })),
+    };
+  } catch (error: any) {
+    if (error instanceof ResendRateLimitError) {
+      throw error;
+    }
+
+    const errorMessage = error.message || "";
+    const isRateLimit =
+      errorMessage.toLowerCase().includes("rate limit") ||
+      errorMessage.toLowerCase().includes("too many requests") ||
+      error.statusCode === 429 ||
+      error.status === 429;
+
+    if (isRateLimit) {
+      const retryAfter = error.headers?.["retry-after"]
+        ? parseInt(error.headers["retry-after"])
+        : 3600;
+      console.error("Resend batch rate limit error (caught):", errorMessage);
+      throw new ResendRateLimitError("Resend batch API rate limit exceeded", retryAfter);
+    }
+
+    console.error("Resend batch API error:", error);
+    throw new Error(error.message || "Failed to send email batch via Resend");
+  }
+}
+
 // Export the sendEmail function that wraps the Resend SDK
 export async function sendEmail(
   options: SendEmailOptions
@@ -84,8 +180,8 @@ export async function sendEmail(
       to: options.to,
       subject: options.subject,
       html: finalHtmlContent,
-      text: textContent, // Now guaranteed to be a string
-      reply_to: options.reply_to,
+      text: textContent,
+      replyTo: options.reply_to,
       headers: options.headers,
     });
 

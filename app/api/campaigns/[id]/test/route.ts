@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMarketingCampaign, getSettings } from "@/lib/cosmic";
 import { sendEmail } from "@/lib/resend";
+import { generatePreheaderHtml } from "@/lib/email-tracking";
 
 export async function POST(
   request: NextRequest,
@@ -107,6 +108,12 @@ export async function POST(
       request.nextUrl.origin ||
       "http://localhost:3000";
 
+    // Get preheader text from campaign content or top-level metadata
+    const preheaderText =
+      campaignContent.preheader_text ||
+      campaign.metadata?.preheader_text ||
+      "";
+
     // Send test emails
     const results = await Promise.allSettled(
       test_emails.map(async (email: string) => {
@@ -132,6 +139,9 @@ export async function POST(
             /\{\{last_name\}\}/g,
             "Demo"
           );
+
+          // Generate preheader HTML
+          const preheaderHtml = generatePreheaderHtml(preheaderText);
 
           // Add test email banner
           const testBanner = `
@@ -178,8 +188,9 @@ export async function POST(
             </div>
           `;
 
+          // Preheader goes first (before any visible content) so email clients pick it up
           const finalContent =
-            testBanner + viewInBrowserLink + personalizedContent + unsubscribeFooter;
+            preheaderHtml + testBanner + viewInBrowserLink + personalizedContent + unsubscribeFooter;
 
           // Add [TEST] prefix to subject
           const testSubject = `[TEST] ${personalizedSubject}`;

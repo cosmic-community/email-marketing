@@ -16,7 +16,7 @@ import {
   ResendRateLimitError,
 } from "@/lib/resend";
 import type { BatchEmailPayload } from "@/lib/resend";
-import { createUnsubscribeUrl, addTrackingToEmail } from "@/lib/email-tracking";
+import { createUnsubscribeUrl, addTrackingToEmail, generatePreheaderHtml } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
 // Resend batch API: max 100 emails per call
@@ -132,6 +132,13 @@ export const sendCampaignFunction = inngest.createFunction(
     const replyTo = settings.metadata.reply_to_email || settings.metadata.from_email;
     const emailContent = campaign.metadata.campaign_content?.content || "";
     const emailSubject = campaign.metadata.campaign_content?.subject || "";
+    const preheaderText =
+      campaign.metadata.campaign_content?.preheader_text ||
+      campaign.metadata.preheader_text ||
+      "";
+
+    // Generate preheader HTML once (same for all recipients)
+    const preheaderHtml = generatePreheaderHtml(preheaderText);
 
     const totalBatches = Math.ceil(unsentContacts.length / BATCH_SIZE);
     const batchesToProcess = Math.min(totalBatches, MAX_BATCHES_PER_RUN);
@@ -205,6 +212,9 @@ export const sendCampaignFunction = inngest.createFunction(
               </p>
             </div>
           `;
+
+          // Prepend preheader HTML (before all visible content)
+          personalizedContent = preheaderHtml + personalizedContent;
 
           // Apply click tracking
           const trackedContent = addTrackingToEmail(

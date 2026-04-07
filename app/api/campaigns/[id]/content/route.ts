@@ -10,7 +10,7 @@ interface RouteParams {
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
-    const { subject, content } = await request.json();
+    const { subject, content, preheader_text } = await request.json();
 
     // Validate required fields
     if (!subject || !content) {
@@ -44,6 +44,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         campaign_content: {
           subject: subject.trim(),
           content: content.trim(),
+          preheader_text: preheader_text?.trim() || "",
           template_type: campaign.metadata.campaign_content?.template_type || {
             key: "custom",
             value: "Custom",
@@ -51,6 +52,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
           original_template_id:
             campaign.metadata.campaign_content?.original_template_id,
         },
+        preheader_text: preheader_text?.trim() || "",
       },
     };
 

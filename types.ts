@@ -188,6 +188,7 @@ export interface CampaignProgress {
 export interface CampaignContent {
   subject: string;
   content: string;
+  preheader_text?: string; // Preview text shown after subject in email clients
   template_type: {
     key: string;
     value: TemplateType;
@@ -220,6 +221,7 @@ export interface MarketingCampaign extends CosmicObject {
     stats?: CampaignStats;
     sending_progress?: CampaignProgress;
     public_sharing_enabled?: boolean; // NEW: controls public link sharing
+    preheader_text?: string; // Preview text shown after subject in email clients
 
     // NEW: Rate limiting fields
     rate_limit_hit_at?: string; // Timestamp when rate limit was hit
@@ -263,6 +265,7 @@ export interface EmailCampaign extends CosmicObject {
     stats?: CampaignStats;
     sending_progress?: CampaignProgress;
     public_sharing_enabled?: boolean; // NEW: controls public link sharing
+    preheader_text?: string; // Preview text shown after subject in email clients
 
     // NEW: Rate limiting fields
     rate_limit_hit_at?: string;
@@ -363,6 +366,7 @@ export interface CreateCampaignData {
   send_date?: string;
   subject?: string; // NEW: subject for campaign content
   content?: string; // NEW: content for campaign content
+  preheader_text?: string; // Preview text shown after subject in email clients
   public_sharing_enabled?: boolean; // NEW: controls public sharing
 }
 

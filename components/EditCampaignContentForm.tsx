@@ -25,6 +25,7 @@ import {
   X,
   BookTemplate,
   Sparkles,
+  Eye as EyeIcon,
 } from "lucide-react";
 import {
   Dialog,
@@ -227,6 +228,10 @@ export default function EditCampaignContentForm({
       campaign.metadata.campaign_content?.content ||
       campaign.metadata.content ||
       "",
+    preheader_text:
+      campaign.metadata.campaign_content?.preheader_text ||
+      campaign.metadata.preheader_text ||
+      "",
     template_type:
       (campaign.metadata.campaign_content?.template_type
         ?.value as TemplateType) || "Newsletter",
@@ -241,6 +246,10 @@ export default function EditCampaignContentForm({
     content:
       campaign.metadata.campaign_content?.content ||
       campaign.metadata.content ||
+      "",
+    preheader_text:
+      campaign.metadata.campaign_content?.preheader_text ||
+      campaign.metadata.preheader_text ||
       "",
     template_type:
       (campaign.metadata.campaign_content?.template_type
@@ -257,6 +266,10 @@ export default function EditCampaignContentForm({
       campaign.metadata.campaign_content?.content ||
       campaign.metadata.content ||
       "",
+    preheader_text:
+      campaign.metadata.campaign_content?.preheader_text ||
+      campaign.metadata.preheader_text ||
+      "",
     template_type:
       (campaign.metadata.campaign_content?.template_type
         ?.value as TemplateType) || "Newsletter",
@@ -271,6 +284,7 @@ export default function EditCampaignContentForm({
     return (
       formData.subject !== originalFormData.subject ||
       formData.content !== originalFormData.content ||
+      formData.preheader_text !== originalFormData.preheader_text ||
       formData.template_type !== originalFormData.template_type
     );
   };
@@ -447,6 +461,7 @@ export default function EditCampaignContentForm({
           body: JSON.stringify({
             subject: formData.subject,
             content: formData.content,
+            preheader_text: formData.preheader_text,
           }),
         });
 
@@ -463,6 +478,7 @@ export default function EditCampaignContentForm({
         const savedData = {
           subject: formData.subject,
           content: formData.content,
+          preheader_text: formData.preheader_text,
           template_type: formData.template_type,
         };
 
@@ -513,6 +529,7 @@ export default function EditCampaignContentForm({
     setFormData({
       subject: displayData.subject,
       content: displayData.content,
+      preheader_text: displayData.preheader_text,
       template_type: displayData.template_type,
     });
   };
@@ -521,6 +538,7 @@ export default function EditCampaignContentForm({
   const endEditingSession = (savedData?: {
     subject: string;
     content: string;
+    preheader_text: string;
     template_type: TemplateType;
   }) => {
     setEditingSessionActive(false);
@@ -546,6 +564,7 @@ export default function EditCampaignContentForm({
     setFormData({
       subject: currentDisplayData.subject,
       content: currentDisplayData.content,
+      preheader_text: currentDisplayData.preheader_text,
       template_type: currentDisplayData.template_type,
     });
   };
@@ -846,6 +865,38 @@ export default function EditCampaignContentForm({
                 </p>
               </div>
 
+              {/* Preheader Text */}
+              <div className="space-y-2">
+                <Label htmlFor="preheader_text" className="flex items-center space-x-1">
+                  <EyeIcon className="h-4 w-4 text-gray-500" />
+                  <span>Preheader Text</span>
+                  <span className="text-xs text-gray-400 font-normal">(optional)</span>
+                </Label>
+                <Input
+                  id="preheader_text"
+                  type="text"
+                  value={formData.preheader_text}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      preheader_text: e.target.value,
+                    }))
+                  }
+                  placeholder="Preview text shown after the subject line in inbox"
+                  maxLength={150}
+                />
+                <p className="text-xs text-gray-500">
+                  This text appears after the subject line in email clients like Gmail and Outlook. Keep it under 100 characters for best results.
+                  {formData.preheader_text && (
+                    <span className={`ml-1 ${
+                      formData.preheader_text.length > 100 ? "text-amber-600" : "text-gray-400"
+                    }`}>
+                      ({formData.preheader_text.length}/150)
+                    </span>
+                  )}
+                </p>
+              </div>
+
               {/* Main Content Editor - 1/3 2/3 Layout */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Left Column - AI Editor (1/3 width) */}
@@ -1119,6 +1170,19 @@ export default function EditCampaignContentForm({
                   {displayData.subject || "No subject line"}
                 </div>
               </div>
+
+              {/* Preheader Preview - Shows displayData */}
+              {displayData.preheader_text && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium text-gray-700 flex items-center space-x-1">
+                    <EyeIcon className="h-3.5 w-3.5 text-gray-500" />
+                    <span>Preheader Text</span>
+                  </Label>
+                  <div className="p-3 bg-gray-50 rounded-md border text-sm text-gray-600 italic">
+                    {displayData.preheader_text}
+                  </div>
+                </div>
+              )}
 
               {/* Content Preview - Shows displayData, not formData */}
               <div className="space-y-2">

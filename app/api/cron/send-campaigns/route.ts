@@ -12,7 +12,7 @@ import {
   reserveContactsForSending,
 } from "@/lib/cosmic";
 import { sendEmail, ResendRateLimitError } from "@/lib/resend";
-import { createUnsubscribeUrl, addTrackingToEmail } from "@/lib/email-tracking";
+import { createUnsubscribeUrl, addTrackingToEmail, generatePreheaderHtml } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
 // Rate limiting configuration optimized for MongoDB/Lambda
@@ -37,20 +37,6 @@ const DB_CONTACT_FETCH_TIMEOUT = 15000; // 15 seconds for fetching large contact
 // - 36K campaign completion: ~36 minutes (~18 runs)
 
 // ===================== DUPLICATE EMAIL PREVENTION =====================
-// CRITICAL FIX: Database-backed campaign locking for distributed serverless environments
-//
-// THE PROBLEM:
-// - In-memory locks DON'T work across serverless instances (each has separate memory)
-// - With 2-minute cron intervals, Vercel spawns multiple concurrent function instances
-// - Cosmic auto-appends UUIDs to duplicate slugs (no unique constraint enforcement)
-// - Without distributed locking, instances can process the same campaign = DUPLICATE EMAILS
-//
-// THE SOLUTION:
-// - Use campaign metadata field 'processing_lock' as a database-backed distributed lock
-// - Lock includes: processor_id, locked_at timestamp, expires_at timestamp
-// - Only ONE instance can acquire the lock using atomic updateOne with current lock check
-// - Locks auto-expire after 3 minutes to prevent stale locks from blocking processing
-//
 const CAMPAIGN_LOCK_TIMEOUT = 180000; // 3 minutes lock timeout
 
 // 🚨 NEW: Execution time tracking
@@ -495,7 +481,6 @@ export async function GET(request: NextRequest) {
           );
 
           // IMPORTANT: Sync tracking stats immediately to capture any opens/clicks
-          // that happened during sending (tracking pixels in preview panes, etc.)
           try {
             console.log(
               `📊 [SYNC] Syncing tracking stats for campaign ${campaign.id}...`
@@ -514,13 +499,11 @@ export async function GET(request: NextRequest) {
               `⚠️  [SYNC] Error syncing tracking stats for campaign ${campaign.id}:`,
               syncError
             );
-            // Don't fail the entire job if stats sync fails
           }
         }
       } catch (error: any) {
         console.error(`❌ [ERROR] Processing campaign ${campaign.id}:`, error);
 
-        // Check if this is a timeout error - if so, don't cancel, just continue in next run
         const isTimeoutError =
           error.message?.includes("timed out") ||
           error.message?.includes("timeout") ||
@@ -530,9 +513,7 @@ export async function GET(request: NextRequest) {
           console.log(
             `⏱️  [TIMEOUT] Campaign ${campaign.id} timed out but will continue in next cron run`
           );
-          // Don't cancel on timeout - the campaign will resume in the next cron run
         } else {
-          // Only cancel on actual errors (not timeouts)
           console.error(
             `⚠️  [CRITICAL ERROR] Campaign ${campaign.id} encountered a non-timeout error, marking as cancelled`
           );
@@ -563,7 +544,6 @@ export async function GET(request: NextRequest) {
           }
         }
       } finally {
-        // CRITICAL FIX: Always release the DATABASE lock, even if processing fails
         if (lockAcquired) {
           await releaseCampaignLock(campaign.id);
           console.log(`🔓 [UNLOCK] Released lock for campaign ${campaign.id}`);
@@ -630,31 +610,27 @@ async function processCampaignBatch(
   );
   console.log(`⏱️  [BATCH] Time remaining: ${timer.getRemainingTime()}ms`);
 
-  // FIXED: Get all target contacts for this campaign with REMOVED artificial limits
-  // Changed: Removed the 10K limit that was preventing Community Spotlight from processing all 37K contacts
   const allContacts = await withDatabaseTimeout(
     () =>
       getCampaignTargetContacts(campaign, {
-        maxContactsPerList: 15000, // Changed: Increased from 2500 to 15000 for better large campaign support
-        totalMaxContacts: 100000, // Changed: Removed artificial 10K limit - increased to 100K for large campaigns
+        maxContactsPerList: 15000,
+        totalMaxContacts: 100000,
       }),
-    DB_CONTACT_FETCH_TIMEOUT, // FIXED: Use longer timeout for large contact fetching
+    DB_CONTACT_FETCH_TIMEOUT,
     `fetch target contacts for campaign ${campaign.id}`
   );
 
   console.log(
-    `📊 [CONTACTS] Campaign ${campaign.id}: Fetched ${allContacts.length} total target contacts (FIXED: removed 10K artificial limit)`
+    `📊 [CONTACTS] Campaign ${campaign.id}: Fetched ${allContacts.length} total target contacts`
   );
 
-  // CRITICAL: Filter out contacts that have already been sent to (including pending)
   console.log(
     `🔍 [FILTER] Filtering unsent contacts from ${allContacts.length} total contacts...`
   );
 
-  // OPTIMIZATION: Pass contacts directly (not just IDs) to avoid re-fetching emails
   const unsentContactIds = await withDatabaseTimeout(
     () => filterUnsentContacts(campaign.id, allContacts),
-    DB_CONTACT_FETCH_TIMEOUT, // FIXED: Use longer timeout for large contact filtering
+    DB_CONTACT_FETCH_TIMEOUT,
     `filter unsent contacts for campaign ${campaign.id}`
   );
 
@@ -667,7 +643,6 @@ async function processCampaignBatch(
     `✅ [FILTER] Complete: ${alreadySentCount} already sent/reserved, ${unsentContacts.length} remaining to send`
   );
 
-  // Log first few emails for debugging
   if (unsentContacts.length > 0) {
     console.log(
       `📧 [DEBUG] First 3 unsent emails: ${unsentContacts
@@ -680,7 +655,6 @@ async function processCampaignBatch(
   if (unsentContacts.length === 0) {
     console.log(`🏁 [COMPLETE] Campaign ${campaign.id} is complete!`);
 
-    // CRITICAL FIX: Get fresh stats from database, not stale batch stats
     const freshStats = await withDatabaseTimeout(
       () => getCampaignSendStats(campaign.id),
       DB_OPERATION_TIMEOUT,
@@ -696,7 +670,7 @@ async function processCampaignBatch(
       completed: true,
       finalStats: {
         sent: freshStats.sent,
-        delivered: freshStats.sent, // Delivered = sent initially (webhooks will update later)
+        delivered: freshStats.sent,
         opened: 0,
         clicked: 0,
         bounced: freshStats.bounced,
@@ -707,7 +681,6 @@ async function processCampaignBatch(
     };
   }
 
-  // 🚨 NEW: Check time before reserving contacts
   if (!timer.hasTimeLeft(5000)) {
     console.log(
       `⏱️  [TIMEOUT] Not enough time to reserve contacts - ${timer.getRemainingTime()}ms remaining`
@@ -720,7 +693,6 @@ async function processCampaignBatch(
     };
   }
 
-  // ATOMIC RESERVATION: Reserve contacts before sending with unique slug constraint
   console.log(
     `🔒 [RESERVE] Reserving ${Math.min(
       BATCH_SIZE,
@@ -751,7 +723,6 @@ async function processCampaignBatch(
     `✅ [RESERVE] Successfully reserved ${reservedContacts.length} contacts`
   );
 
-  // Send emails with proper rate limiting
   let batchesProcessed = 0;
   let rateLimitHit = false;
   let emailsProcessed = 0;
@@ -761,10 +732,16 @@ async function processCampaignBatch(
     process.env.NEXT_PUBLIC_SITE_URL ||
     "http://localhost:3000";
 
-  // 🚨 NEW: Time-aware batch processing
+  // Generate preheader HTML once for the campaign
+  const preheaderText =
+    campaign.metadata.campaign_content?.preheader_text ||
+    campaign.metadata.preheader_text ||
+    "";
+  const preheaderHtml = generatePreheaderHtml(preheaderText);
+
   const availableTime = timer.getRemainingTime();
   const estimatedTimePerEmail =
-    MIN_DELAY_MS + DELAY_BETWEEN_DB_OPERATIONS + 500; // Add buffer
+    MIN_DELAY_MS + DELAY_BETWEEN_DB_OPERATIONS + 500;
   const maxEmailsInTime = Math.floor(availableTime / estimatedTimePerEmail);
   const effectiveMaxBatches = Math.min(
     MAX_BATCHES_PER_RUN,
@@ -778,7 +755,6 @@ async function processCampaignBatch(
     `📊 [TIMING] Max emails in time: ${maxEmailsInTime}, effective max batches: ${effectiveMaxBatches}`
   );
 
-  // Process reserved contacts in smaller batches
   for (
     let i = 0;
     i < reservedContacts.length && batchesProcessed < effectiveMaxBatches;
@@ -798,7 +774,6 @@ async function processCampaignBatch(
       } reserved contacts`
     );
 
-    // Process each reserved contact with proper rate limiting
     for (let contactIndex = 0; contactIndex < batch.length; contactIndex++) {
       if (rateLimitHit || !timer.hasTimeLeft(1000)) {
         console.log(
@@ -809,7 +784,6 @@ async function processCampaignBatch(
 
       const contact = batch[contactIndex];
 
-      // CRITICAL FIX: Add explicit undefined check to satisfy TypeScript
       if (!contact) {
         console.error(
           `❌ [ERROR] Undefined contact at batch index ${contactIndex}`
@@ -821,7 +795,6 @@ async function processCampaignBatch(
       const pendingRecordId = pendingRecordIds.get(contact.id);
 
       try {
-        // Get campaign content
         const emailContent = campaign.metadata.campaign_content?.content || "";
         const emailSubject = campaign.metadata.campaign_content?.subject || "";
 
@@ -873,6 +846,9 @@ async function processCampaignBatch(
 
         personalizedContent += unsubscribeFooter;
 
+        // Prepend preheader HTML (before all visible content so email clients pick it up)
+        personalizedContent = preheaderHtml + personalizedContent;
+
         // Send email
         const result = await sendEmail({
           from: `${settings.metadata.from_name} <${settings.metadata.from_email}>`,
@@ -893,7 +869,6 @@ async function processCampaignBatch(
 
         console.log(`✅ [EMAIL] Sent to ${contact.metadata.email}`);
 
-        // Update the pending record to "sent" status
         await withDatabaseTimeout(
           () =>
             createCampaignSend({
@@ -908,14 +883,12 @@ async function processCampaignBatch(
           `update send record for ${contact.metadata.email}`
         );
 
-        // Throttle database operations to prevent connection pool exhaustion
         await new Promise((resolve) =>
           setTimeout(resolve, DELAY_BETWEEN_DB_OPERATIONS)
         );
 
         emailsProcessed++;
 
-        // Calculate dynamic delay to maintain rate limit
         const elapsed = Date.now() - startTime;
         const delay = Math.max(0, MIN_DELAY_MS - elapsed);
 
@@ -923,7 +896,6 @@ async function processCampaignBatch(
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       } catch (error: any) {
-        // Check if it's a rate limit error
         if (
           error instanceof ResendRateLimitError ||
           error.message?.toLowerCase().includes("rate limit") ||
@@ -935,7 +907,6 @@ async function processCampaignBatch(
             `⚠️  [RATE LIMIT] Hit! Pausing campaign. Retry after ${retryAfter}s`
           );
 
-          // Save rate limit state
           await withDatabaseTimeout(
             () =>
               updateEmailCampaign(campaign.id, {
@@ -947,10 +918,9 @@ async function processCampaignBatch(
           );
 
           rateLimitHit = true;
-          break; // Stop processing this campaign
+          break;
         }
 
-        // Regular error - update pending record to "failed"
         console.error(
           `❌ [EMAIL ERROR] Failed to send to ${contact.metadata.email}:`,
           error.message
@@ -974,12 +944,10 @@ async function processCampaignBatch(
           console.error(`❌ [DB ERROR] Failed to update send record:`, dbError);
         }
 
-        // Throttle database operations even on errors
         await new Promise((resolve) =>
           setTimeout(resolve, DELAY_BETWEEN_DB_OPERATIONS)
         );
 
-        // Still apply rate limiting even on errors
         const elapsed = Date.now() - startTime;
         const delay = Math.max(0, MIN_DELAY_MS - elapsed);
         if (delay > 0) {
@@ -990,7 +958,6 @@ async function processCampaignBatch(
 
     batchesProcessed++;
 
-    // CRITICAL FIX: Update campaign progress after each batch using fresh database stats
     try {
       const freshStats = await withDatabaseTimeout(
         () => getCampaignSendStats(campaign.id),
@@ -1027,10 +994,8 @@ async function processCampaignBatch(
         `⚠️  [PROGRESS ERROR] Failed to update campaign progress:`,
         progressError
       );
-      // Continue processing even if progress update fails
     }
 
-    // Optimized delay between batches for MongoDB/Lambda performance
     if (
       batchesProcessed < effectiveMaxBatches &&
       !rateLimitHit &&
@@ -1045,7 +1010,6 @@ async function processCampaignBatch(
     }
   }
 
-  // SIMPLE FIX: Check if campaign is complete by comparing stats to total contacts
   if (!rateLimitHit) {
     console.log(`📊 [COMPLETION] Checking if campaign is complete...`);
 
@@ -1059,11 +1023,9 @@ async function processCampaignBatch(
       `📊 [FINAL STATS] sent=${finalFreshStats.sent}, failed=${finalFreshStats.failed}, bounced=${finalFreshStats.bounced}, pending=${finalFreshStats.pending}, total_contacts=${allContacts.length}`
     );
 
-    // Calculate total processed (sent + failed + bounced)
     const totalProcessed =
       finalFreshStats.sent + finalFreshStats.failed + finalFreshStats.bounced;
 
-    // Campaign is complete if all contacts have been processed and no pending
     if (totalProcessed >= allContacts.length && finalFreshStats.pending === 0) {
       console.log(
         `✅ [COMPLETE] Campaign ${campaign.id} fully completed! ${totalProcessed}/${allContacts.length} contacts processed`

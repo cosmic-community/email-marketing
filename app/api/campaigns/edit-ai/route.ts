@@ -227,6 +227,7 @@ IMPORTANT: DO NOT include or modify any unsubscribe links - these are added auto
 
             // Generate improved content with Cosmic AI streaming - include media_url if available
             const aiRequestOptions: any = {
+              model: 'claude-opus-4-7',
               prompt: aiPrompt,
               max_tokens: 60000,
               stream: true

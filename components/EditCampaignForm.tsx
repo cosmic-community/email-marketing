@@ -44,7 +44,8 @@ interface EditCampaignFormProps {
   onFormDataChange: (
     formData: any,
     isLoading: boolean,
-    handleSubmit: () => Promise<void>
+    handleSubmit: () => Promise<void>,
+    totalContacts: number
   ) => void;
 }
 
@@ -62,6 +63,7 @@ export default function EditCampaignForm({
   // Contact count state
   const [listContactCounts, setListContactCounts] = useState<Record<string, number>>({});
   const [isLoadingCounts, setIsLoadingCounts] = useState(false);
+  const [countsLoaded, setCountsLoaded] = useState(false);
 
   // Contact search state
   const [contactSearchTerm, setContactSearchTerm] = useState("");
@@ -94,8 +96,9 @@ export default function EditCampaignForm({
       const ids = lists.map((l) => l.id).join(",");
       const response = await fetch(`/api/lists/counts?ids=${ids}`);
       const data = await response.json();
-      if (data.success) {
+      if (data.success && data.data) {
         setListContactCounts(data.data);
+        setCountsLoaded(true);
       }
     } catch (error) {
       console.error("Error fetching list contact counts:", error);
@@ -109,13 +112,23 @@ export default function EditCampaignForm({
     fetchListContactCounts();
   }, [fetchListContactCounts]);
 
-  // Calculate total contacts across selected lists
+  // Get the contact count for a specific list, with fallback to metadata
+  const getListCount = useCallback((listId: string) => {
+    if (listContactCounts[listId] !== undefined) {
+      return listContactCounts[listId];
+    }
+    // Fallback to stored metadata count
+    const list = lists.find((l) => l.id === listId);
+    return list?.metadata.total_contacts || 0;
+  }, [listContactCounts, lists]);
+
+  // Calculate total contacts across selected lists, using same fallback logic
   const getSelectedListsContactCount = useCallback(() => {
     if (formData.target_type !== "lists") return 0;
     return formData.list_ids.reduce((total, listId) => {
-      return total + (listContactCounts[listId] || 0);
+      return total + getListCount(listId);
     }, 0);
-  }, [formData.list_ids, formData.target_type, listContactCounts]);
+  }, [formData.list_ids, formData.target_type, getListCount]);
 
   // Search contacts with debouncing
   const searchContacts = useCallback(async (term: string) => {
@@ -212,12 +225,12 @@ export default function EditCampaignForm({
       }
 
       // Extract list IDs - handle both string IDs and objects with id property
-      const listIds = targetLists.map((list) =>
+      const listIds = targetLists.map((list: any) =>
         typeof list === "string" ? list : list.id
       );
 
       // Extract contact IDs - handle both string IDs and objects with id property
-      const contactIds = targetContacts.map((contact) =>
+      const contactIds = targetContacts.map((contact: any) =>
         typeof contact === "string" ? contact : contact.id
       );
 
@@ -250,10 +263,12 @@ export default function EditCampaignForm({
     initializeFormData();
   }, [campaign]);
 
-  // Update parent component whenever form data or loading state changes
+  const totalSelectedContacts = getSelectedListsContactCount();
+
+  // Update parent component whenever form data, loading state, or contact counts change
   useEffect(() => {
-    onFormDataChange(formData, isLoading, handleSubmit);
-  }, [formData, isLoading]);
+    onFormDataChange(formData, isLoading, handleSubmit, totalSelectedContacts);
+  }, [formData, isLoading, totalSelectedContacts]);
 
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
@@ -438,18 +453,6 @@ export default function EditCampaignForm({
     if (url.length <= maxLength) return url;
     return url.substring(0, maxLength) + "...";
   };
-
-  // Get the contact count for a specific list
-  const getListCount = (listId: string) => {
-    if (listContactCounts[listId] !== undefined) {
-      return listContactCounts[listId];
-    }
-    // Fallback to stored metadata count
-    const list = lists.find((l) => l.id === listId);
-    return list?.metadata.total_contacts || 0;
-  };
-
-  const totalSelectedContacts = getSelectedListsContactCount();
 
   return (
     <Card>
@@ -956,7 +959,7 @@ export default function EditCampaignForm({
               {formData.target_type === "lists" ? (
                 <>
                   {getSelectedCount()} list{getSelectedCount() !== 1 ? "s" : ""} selected
-                  {!isLoadingCounts && totalSelectedContacts > 0 && (
+                  {totalSelectedContacts > 0 && (
                     <span className="font-semibold"> · {formatCount(totalSelectedContacts)} active contacts</span>
                   )}
                 </>

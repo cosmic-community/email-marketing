@@ -30,6 +30,7 @@ interface CampaignActionsProps {
   };
   isLoading: boolean;
   onSubmit: () => Promise<void>;
+  totalContacts?: number;
 }
 
 export default function CampaignActions({
@@ -40,47 +41,13 @@ export default function CampaignActions({
   formData,
   isLoading,
   onSubmit,
+  totalContacts,
 }: CampaignActionsProps) {
   const { toast } = useToast();
   const canEdit = campaign.metadata?.status?.value === "Draft";
   const status = campaign.metadata?.status?.value || "Draft";
 
-  // Recipient count state
-  const [recipientCount, setRecipientCount] = useState<number | null>(null);
-  const [isLoadingCount, setIsLoadingCount] = useState(false);
-
   const publicUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/public/campaigns/${campaign.id}`;
-
-  // Fetch recipient counts when target lists change
-  const fetchRecipientCount = useCallback(async () => {
-    if (formData.target_type === "lists" && formData.list_ids.length > 0) {
-      setIsLoadingCount(true);
-      try {
-        const ids = formData.list_ids.join(",");
-        const response = await fetch(`/api/lists/counts?ids=${ids}`);
-        const data = await response.json();
-        if (data.success) {
-          const total = Object.values(data.data as Record<string, number>).reduce(
-            (sum: number, count: number) => sum + count,
-            0
-          );
-          setRecipientCount(total);
-        }
-      } catch (error) {
-        console.error("Error fetching recipient count:", error);
-      } finally {
-        setIsLoadingCount(false);
-      }
-    } else if (formData.target_type === "contacts") {
-      setRecipientCount(formData.contact_ids.length);
-    } else {
-      setRecipientCount(null);
-    }
-  }, [formData.target_type, formData.list_ids, formData.contact_ids]);
-
-  useEffect(() => {
-    fetchRecipientCount();
-  }, [fetchRecipientCount]);
 
   const handleCopyLink = async () => {
     try {
@@ -109,25 +76,38 @@ export default function CampaignActions({
     return num.toLocaleString("en-US");
   };
 
+  // Get the list names for the "Ready to send to" display
+  const getTargetListNames = () => {
+    if (formData.target_type !== "lists") return [];
+    return formData.list_ids
+      .map((id) => {
+        const list = lists.find((l) => l.id === id);
+        return list?.metadata.name || "Unknown List";
+      })
+      .filter(Boolean);
+  };
+
+  // Determine the display count: prefer the totalContacts prop from EditCampaignForm,
+  // fall back to direct contact count for contact-based targeting
+  const displayCount = (() => {
+    if (formData.target_type === "lists" && totalContacts !== undefined) {
+      return totalContacts;
+    }
+    if (formData.target_type === "contacts") {
+      return formData.contact_ids.length;
+    }
+    return null;
+  })();
+
+  const hasTargets =
+    (formData.target_type === "lists" && formData.list_ids.length > 0) ||
+    (formData.target_type === "contacts" && formData.contact_ids.length > 0) ||
+    (formData.target_type === "tags" && formData.target_tags.length > 0);
+
+  const targetListNames = getTargetListNames();
+
   return (
     <div className="space-y-4">
-      {/* Recipient Count */}
-      {recipientCount !== null && recipientCount > 0 && (
-        <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
-          <div className="flex items-center space-x-2">
-            <Users className="h-4 w-4 text-blue-600" />
-            <span className="text-sm font-medium text-blue-800">Recipients</span>
-          </div>
-          <span className="text-sm font-bold text-blue-900">
-            {isLoadingCount ? (
-              <span className="inline-block w-10 h-4 bg-blue-200 rounded animate-pulse" />
-            ) : (
-              <>{formatCount(recipientCount)} contact{recipientCount !== 1 ? "s" : ""}</>
-            )}
-          </span>
-        </div>
-      )}
-
       {/* Update Campaign Button */}
       {canEdit && (
         <Button
@@ -156,6 +136,44 @@ export default function CampaignActions({
             campaignId={campaign.id}
             campaignName={campaign.metadata.name}
           />
+        </div>
+      )}
+
+      {/* Ready to Send To - shows targets and contact count */}
+      {hasTargets && (
+        <div className="p-4 bg-gray-50 border rounded-lg space-y-3">
+          <div className="text-sm font-semibold text-gray-800 text-center">
+            Ready to send to:
+          </div>
+
+          {/* Contact count badge */}
+          {displayCount !== null && displayCount > 0 && (
+            <div className="flex items-center justify-center">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 border border-blue-200 rounded-full">
+                <Users className="h-3.5 w-3.5 text-blue-700" />
+                <span className="text-sm font-bold text-blue-900">
+                  {formatCount(displayCount)} contact{displayCount !== 1 ? "s" : ""}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Target details */}
+          {formData.target_type === "lists" && targetListNames.length > 0 && (
+            <p className="text-xs text-gray-600 text-center">
+              Recipients from {targetListNames.length} list{targetListNames.length !== 1 ? "s" : ""} ({targetListNames.join(", ")})
+            </p>
+          )}
+          {formData.target_type === "contacts" && (
+            <p className="text-xs text-gray-600 text-center">
+              {formData.contact_ids.length} individual contact{formData.contact_ids.length !== 1 ? "s" : ""}
+            </p>
+          )}
+          {formData.target_type === "tags" && (
+            <p className="text-xs text-gray-600 text-center">
+              Contacts with tag{formData.target_tags.length !== 1 ? "s" : ""}: {formData.target_tags.join(", ")}
+            </p>
+          )}
         </div>
       )}
 

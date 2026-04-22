@@ -76,6 +76,7 @@ export default function CampaignPageClient({
   const [handleSubmit, setHandleSubmit] = useState<
     (() => Promise<void>) | null
   >(null);
+  const [totalContacts, setTotalContacts] = useState<number>(0);
   const [isRefreshingStats, setIsRefreshingStats] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -104,11 +105,13 @@ export default function CampaignPageClient({
     (
       newFormData: any,
       newIsLoading: boolean,
-      newHandleSubmit: () => Promise<void>
+      newHandleSubmit: () => Promise<void>,
+      newTotalContacts: number
     ) => {
       setFormData(newFormData);
       setIsLoading(newIsLoading);
       setHandleSubmit(() => newHandleSubmit);
+      setTotalContacts(newTotalContacts);
     },
     []
   );
@@ -619,6 +622,7 @@ export default function CampaignPageClient({
                 formData={formData}
                 isLoading={isLoading}
                 onSubmit={handleSubmit}
+                totalContacts={totalContacts}
               />
             </CardContent>
           </Card>

@@ -385,15 +385,6 @@ export default function SendCampaignButton({
         </div>
       )}
 
-      {hasTargets && (
-        <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
-          <div className="text-sm text-gray-700 text-center">
-            <div className="font-medium">Ready to send to:</div>
-            <div className="mt-1">{getRecipientDisplay()}</div>
-          </div>
-        </div>
-      )}
-
       {/* Send Now Button */}
       <Button
         onClick={() => setShowConfirmModal(true)}

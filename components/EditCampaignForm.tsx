@@ -44,7 +44,8 @@ interface EditCampaignFormProps {
   onFormDataChange: (
     formData: any,
     isLoading: boolean,
-    handleSubmit: () => Promise<void>
+    handleSubmit: () => Promise<void>,
+    totalContacts: number
   ) => void;
 }
 
@@ -58,6 +59,11 @@ export default function EditCampaignForm({
   const router = useRouter();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+
+  // Contact count state
+  const [listContactCounts, setListContactCounts] = useState<Record<string, number>>({});
+  const [isLoadingCounts, setIsLoadingCounts] = useState(false);
+  const [countsLoaded, setCountsLoaded] = useState(false);
 
   // Contact search state
   const [contactSearchTerm, setContactSearchTerm] = useState("");
@@ -81,6 +87,48 @@ export default function EditCampaignForm({
 
   const canEdit = campaign.metadata?.status?.value === "Draft";
   const status = campaign.metadata?.status?.value || "Draft";
+
+  // Fetch real-time contact counts for all lists
+  const fetchListContactCounts = useCallback(async () => {
+    if (lists.length === 0) return;
+    setIsLoadingCounts(true);
+    try {
+      const ids = lists.map((l) => l.id).join(",");
+      const response = await fetch(`/api/lists/counts?ids=${ids}`);
+      const data = await response.json();
+      if (data.success && data.data) {
+        setListContactCounts(data.data);
+        setCountsLoaded(true);
+      }
+    } catch (error) {
+      console.error("Error fetching list contact counts:", error);
+    } finally {
+      setIsLoadingCounts(false);
+    }
+  }, [lists]);
+
+  // Fetch counts on mount
+  useEffect(() => {
+    fetchListContactCounts();
+  }, [fetchListContactCounts]);
+
+  // Get the contact count for a specific list, with fallback to metadata
+  const getListCount = useCallback((listId: string) => {
+    if (listContactCounts[listId] !== undefined) {
+      return listContactCounts[listId];
+    }
+    // Fallback to stored metadata count
+    const list = lists.find((l) => l.id === listId);
+    return list?.metadata.total_contacts || 0;
+  }, [listContactCounts, lists]);
+
+  // Calculate total contacts across selected lists, using same fallback logic
+  const getSelectedListsContactCount = useCallback(() => {
+    if (formData.target_type !== "lists") return 0;
+    return formData.list_ids.reduce((total, listId) => {
+      return total + getListCount(listId);
+    }, 0);
+  }, [formData.list_ids, formData.target_type, getListCount]);
 
   // Search contacts with debouncing
   const searchContacts = useCallback(async (term: string) => {
@@ -177,12 +225,12 @@ export default function EditCampaignForm({
       }
 
       // Extract list IDs - handle both string IDs and objects with id property
-      const listIds = targetLists.map((list) =>
+      const listIds = targetLists.map((list: any) =>
         typeof list === "string" ? list : list.id
       );
 
       // Extract contact IDs - handle both string IDs and objects with id property
-      const contactIds = targetContacts.map((contact) =>
+      const contactIds = targetContacts.map((contact: any) =>
         typeof contact === "string" ? contact : contact.id
       );
 
@@ -215,10 +263,12 @@ export default function EditCampaignForm({
     initializeFormData();
   }, [campaign]);
 
-  // Update parent component whenever form data or loading state changes
+  const totalSelectedContacts = getSelectedListsContactCount();
+
+  // Update parent component whenever form data, loading state, or contact counts change
   useEffect(() => {
-    onFormDataChange(formData, isLoading, handleSubmit);
-  }, [formData, isLoading]);
+    onFormDataChange(formData, isLoading, handleSubmit, totalSelectedContacts);
+  }, [formData, isLoading, totalSelectedContacts]);
 
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
@@ -387,6 +437,11 @@ export default function EditCampaignForm({
       return formData.target_tags.length;
     }
     return 0;
+  };
+
+  // Format contact count with commas
+  const formatCount = (num: number) => {
+    return num.toLocaleString("en-US");
   };
 
   const publicUrl = `${
@@ -560,30 +615,65 @@ export default function EditCampaignForm({
                 </p>
               ) : (
                 <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {lists.map((list) => (
-                    <div
-                      key={list.id}
-                      className="flex items-center space-x-3 p-2 bg-white rounded border"
-                    >
-                      <Checkbox
-                        id={`list-${list.id}`}
-                        checked={formData.list_ids.includes(list.id)}
-                        onCheckedChange={(checked) =>
-                          handleListSelect(list.id, checked as boolean)
-                        }
-                        disabled={!canEdit}
-                      />
-                      <label
-                        htmlFor={`list-${list.id}`}
-                        className="flex-1 cursor-pointer"
+                  {lists.map((list) => {
+                    const count = getListCount(list.id);
+                    return (
+                      <div
+                        key={list.id}
+                        className="flex items-center space-x-3 p-2 bg-white rounded border"
                       >
-                        <div className="font-medium">{list.metadata.name}</div>
-                        <div className="text-sm text-gray-500">
-                          {list.metadata.total_contacts || 0} contacts
-                        </div>
-                      </label>
-                    </div>
-                  ))}
+                        <Checkbox
+                          id={`list-${list.id}`}
+                          checked={formData.list_ids.includes(list.id)}
+                          onCheckedChange={(checked) =>
+                            handleListSelect(list.id, checked as boolean)
+                          }
+                          disabled={!canEdit}
+                        />
+                        <label
+                          htmlFor={`list-${list.id}`}
+                          className="flex-1 cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="font-medium">{list.metadata.name}</div>
+                            <Badge variant="secondary" className="text-xs font-normal">
+                              <Users className="h-3 w-3 mr-1" />
+                              {isLoadingCounts ? (
+                                <span className="inline-block w-6 h-3 bg-gray-200 rounded animate-pulse" />
+                              ) : (
+                                formatCount(count)
+                              )}
+                              {" "}contact{count !== 1 ? "s" : ""}
+                            </Badge>
+                          </div>
+                          {list.metadata.description && (
+                            <div className="text-sm text-gray-500 mt-0.5">
+                              {list.metadata.description}
+                            </div>
+                          )}
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Total contacts summary for selected lists */}
+              {formData.list_ids.length > 0 && (
+                <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg mt-2">
+                  <div className="flex items-center space-x-2">
+                    <Users className="h-4 w-4 text-blue-600" />
+                    <span className="text-sm font-medium text-blue-800">
+                      Total Recipients
+                    </span>
+                  </div>
+                  <span className="text-sm font-bold text-blue-900">
+                    {isLoadingCounts ? (
+                      <span className="inline-block w-12 h-4 bg-blue-200 rounded animate-pulse" />
+                    ) : (
+                      <>{formatCount(totalSelectedContacts)} active contact{totalSelectedContacts !== 1 ? "s" : ""}</>
+                    )}
+                  </span>
                 </div>
               )}
             </div>
@@ -866,7 +956,16 @@ export default function EditCampaignForm({
               Campaign Target Summary:
             </div>
             <div className="text-sm text-blue-600 mt-1">
-              {getSelectedCount()} {formData.target_type} selected
+              {formData.target_type === "lists" ? (
+                <>
+                  {getSelectedCount()} list{getSelectedCount() !== 1 ? "s" : ""} selected
+                  {totalSelectedContacts > 0 && (
+                    <span className="font-semibold"> · {formatCount(totalSelectedContacts)} active contacts</span>
+                  )}
+                </>
+              ) : (
+                <>{getSelectedCount()} {formData.target_type} selected</>
+              )}
             </div>
           </div>
         )}

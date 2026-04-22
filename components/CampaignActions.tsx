@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   MarketingCampaign,
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import SendCampaignButton from "@/components/SendCampaignButton";
 import TestEmailModal from "@/components/TestEmailModal";
-import { Save, TestTube, Share, Copy, ExternalLink } from "lucide-react";
+import { Save, TestTube, Share, Copy, ExternalLink, Users } from "lucide-react";
 
 interface CampaignActionsProps {
   campaign: MarketingCampaign;
@@ -30,6 +30,7 @@ interface CampaignActionsProps {
   };
   isLoading: boolean;
   onSubmit: () => Promise<void>;
+  totalContacts?: number;
 }
 
 export default function CampaignActions({
@@ -40,6 +41,7 @@ export default function CampaignActions({
   formData,
   isLoading,
   onSubmit,
+  totalContacts,
 }: CampaignActionsProps) {
   const { toast } = useToast();
   const canEdit = campaign.metadata?.status?.value === "Draft";
@@ -68,6 +70,41 @@ export default function CampaignActions({
   const handleOpenInNewTab = () => {
     window.open(publicUrl, '_blank', 'noopener,noreferrer');
   };
+
+  // Format number with commas
+  const formatCount = (num: number) => {
+    return num.toLocaleString("en-US");
+  };
+
+  // Get the list names for the "Ready to send to" display
+  const getTargetListNames = () => {
+    if (formData.target_type !== "lists") return [];
+    return formData.list_ids
+      .map((id) => {
+        const list = lists.find((l) => l.id === id);
+        return list?.metadata.name || "Unknown List";
+      })
+      .filter(Boolean);
+  };
+
+  // Determine the display count: prefer the totalContacts prop from EditCampaignForm,
+  // fall back to direct contact count for contact-based targeting
+  const displayCount = (() => {
+    if (formData.target_type === "lists" && totalContacts !== undefined) {
+      return totalContacts;
+    }
+    if (formData.target_type === "contacts") {
+      return formData.contact_ids.length;
+    }
+    return null;
+  })();
+
+  const hasTargets =
+    (formData.target_type === "lists" && formData.list_ids.length > 0) ||
+    (formData.target_type === "contacts" && formData.contact_ids.length > 0) ||
+    (formData.target_type === "tags" && formData.target_tags.length > 0);
+
+  const targetListNames = getTargetListNames();
 
   return (
     <div className="space-y-4">
@@ -99,6 +136,44 @@ export default function CampaignActions({
             campaignId={campaign.id}
             campaignName={campaign.metadata.name}
           />
+        </div>
+      )}
+
+      {/* Ready to Send To - shows targets and contact count */}
+      {hasTargets && (
+        <div className="p-4 bg-gray-50 border rounded-lg space-y-3">
+          <div className="text-sm font-semibold text-gray-800 text-center">
+            Ready to send to:
+          </div>
+
+          {/* Contact count badge */}
+          {displayCount !== null && displayCount > 0 && (
+            <div className="flex items-center justify-center">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 border border-blue-200 rounded-full">
+                <Users className="h-3.5 w-3.5 text-blue-700" />
+                <span className="text-sm font-bold text-blue-900">
+                  {formatCount(displayCount)} contact{displayCount !== 1 ? "s" : ""}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Target details */}
+          {formData.target_type === "lists" && targetListNames.length > 0 && (
+            <p className="text-xs text-gray-600 text-center">
+              Recipients from {targetListNames.length} list{targetListNames.length !== 1 ? "s" : ""} ({targetListNames.join(", ")})
+            </p>
+          )}
+          {formData.target_type === "contacts" && (
+            <p className="text-xs text-gray-600 text-center">
+              {formData.contact_ids.length} individual contact{formData.contact_ids.length !== 1 ? "s" : ""}
+            </p>
+          )}
+          {formData.target_type === "tags" && (
+            <p className="text-xs text-gray-600 text-center">
+              Contacts with tag{formData.target_tags.length !== 1 ? "s" : ""}: {formData.target_tags.join(", ")}
+            </p>
+          )}
         </div>
       )}
 

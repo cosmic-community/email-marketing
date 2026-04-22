@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   MarketingCampaign,
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import SendCampaignButton from "@/components/SendCampaignButton";
 import TestEmailModal from "@/components/TestEmailModal";
-import { Save, TestTube, Share, Copy, ExternalLink } from "lucide-react";
+import { Save, TestTube, Share, Copy, ExternalLink, Users } from "lucide-react";
 
 interface CampaignActionsProps {
   campaign: MarketingCampaign;
@@ -45,7 +45,42 @@ export default function CampaignActions({
   const canEdit = campaign.metadata?.status?.value === "Draft";
   const status = campaign.metadata?.status?.value || "Draft";
 
+  // Recipient count state
+  const [recipientCount, setRecipientCount] = useState<number | null>(null);
+  const [isLoadingCount, setIsLoadingCount] = useState(false);
+
   const publicUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/public/campaigns/${campaign.id}`;
+
+  // Fetch recipient counts when target lists change
+  const fetchRecipientCount = useCallback(async () => {
+    if (formData.target_type === "lists" && formData.list_ids.length > 0) {
+      setIsLoadingCount(true);
+      try {
+        const ids = formData.list_ids.join(",");
+        const response = await fetch(`/api/lists/counts?ids=${ids}`);
+        const data = await response.json();
+        if (data.success) {
+          const total = Object.values(data.data as Record<string, number>).reduce(
+            (sum: number, count: number) => sum + count,
+            0
+          );
+          setRecipientCount(total);
+        }
+      } catch (error) {
+        console.error("Error fetching recipient count:", error);
+      } finally {
+        setIsLoadingCount(false);
+      }
+    } else if (formData.target_type === "contacts") {
+      setRecipientCount(formData.contact_ids.length);
+    } else {
+      setRecipientCount(null);
+    }
+  }, [formData.target_type, formData.list_ids, formData.contact_ids]);
+
+  useEffect(() => {
+    fetchRecipientCount();
+  }, [fetchRecipientCount]);
 
   const handleCopyLink = async () => {
     try {
@@ -69,8 +104,30 @@ export default function CampaignActions({
     window.open(publicUrl, '_blank', 'noopener,noreferrer');
   };
 
+  // Format number with commas
+  const formatCount = (num: number) => {
+    return num.toLocaleString("en-US");
+  };
+
   return (
     <div className="space-y-4">
+      {/* Recipient Count */}
+      {recipientCount !== null && recipientCount > 0 && (
+        <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center space-x-2">
+            <Users className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-medium text-blue-800">Recipients</span>
+          </div>
+          <span className="text-sm font-bold text-blue-900">
+            {isLoadingCount ? (
+              <span className="inline-block w-10 h-4 bg-blue-200 rounded animate-pulse" />
+            ) : (
+              <>{formatCount(recipientCount)} contact{recipientCount !== 1 ? "s" : ""}</>
+            )}
+          </span>
+        </div>
+      )}
+
       {/* Update Campaign Button */}
       {canEdit && (
         <Button

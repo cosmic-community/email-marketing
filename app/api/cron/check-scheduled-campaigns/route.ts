@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getMarketingCampaigns } from "@/lib/cosmic";
 import { inngest } from "@/lib/inngest";
 
+export const dynamic = 'force-dynamic';
+
 /**
  * Simplified Cron Job - Only checks for scheduled campaigns
  *

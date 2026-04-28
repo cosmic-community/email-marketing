@@ -3,6 +3,8 @@ import { cosmic } from '@/lib/cosmic'
 import { sendEmail } from '@/lib/resend'
 import { getSettings } from '@/lib/cosmic'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
@@ -193,4 +195,3 @@ export async function GET(request: NextRequest) {
     )
   }
 }
-

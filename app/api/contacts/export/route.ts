@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getEmailContacts } from '@/lib/cosmic'
 
+export const dynamic = 'force-dynamic'
+
 // Helper function to escape CSV values
 function escapeCsvValue(value: any): string {
   if (value === null || value === undefined) {

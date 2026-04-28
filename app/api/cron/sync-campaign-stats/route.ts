@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMarketingCampaigns, syncCampaignTrackingStats } from "@/lib/cosmic";
 
+export const dynamic = 'force-dynamic'
+
 // This cron job syncs campaign statistics from email-tracking-events
 // Run this periodically (e.g., every 15-30 minutes) to keep campaign stats up to date
 export async function GET(request: NextRequest) {

@@ -15,6 +15,8 @@ import { sendEmail, ResendRateLimitError } from "@/lib/resend";
 import { createUnsubscribeUrl, addTrackingToEmail, generatePreheaderHtml } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
+export const dynamic = 'force-dynamic'
+
 // Rate limiting configuration optimized for MongoDB/Lambda
 // MAXIMUM SAFE SPEED - Optimized for ~60K emails/hour with 2-minute cron
 const EMAILS_PER_SECOND = 9; // 90% of 10/sec limit - aggressive but safe

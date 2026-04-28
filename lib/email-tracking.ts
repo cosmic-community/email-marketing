@@ -23,9 +23,10 @@ export function addTrackingToEmail(
   baseUrl: string
 ): string {
   // Replace all links with tracking redirects
+  // Changed: Match both single and double-quoted href attributes
   const trackedHtml = html.replace(
-    /href="(https?:\/\/[^"]+)"/g,
-    (match, url) => {
+    /href=(["'])(https?:\/\/[^"']+)\1/g,
+    (match, quote, url) => {
       // Don't track unsubscribe links or internal tracking links
       if (
         url.includes("/api/unsubscribe") ||
@@ -35,10 +36,18 @@ export function addTrackingToEmail(
         return match;
       }
 
+      // Changed: Decode HTML entities (&amp; → &, &#38; → &, etc.) before URL encoding
+      // This prevents double-encoded ampersands like "&amp;utm_medium=email"
+      // from breaking UTM parameters in tracked links
+      const decodedUrl = url
+        .replace(/&amp;/g, "&")
+        .replace(/&#38;/g, "&")
+        .replace(/&#x26;/gi, "&");
+
       const trackingUrl = `${baseUrl}/api/track/click?campaign=${campaignId}&contact=${contactId}&url=${encodeURIComponent(
-        url
+        decodedUrl
       )}`;
-      return `href="${trackingUrl}"`;
+      return `href=${quote}${trackingUrl}${quote}`;
     }
   );
 

@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cosmic } from '@/lib/cosmic'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const campaignId = searchParams.get('c')
-    const contactId = searchParams.get('u')
+    // Changed: Read 'campaign' and 'contact' to match what email-tracking.ts generates
+    // Also support legacy 'c' and 'u' params for backward compatibility
+    const campaignId = searchParams.get('campaign') || searchParams.get('c')
+    const contactId = searchParams.get('contact') || searchParams.get('u')
     const url = searchParams.get('url')
 
     if (!campaignId || !url) {
@@ -64,8 +68,12 @@ export async function GET(request: NextRequest) {
       console.error('Error creating tracking event:', trackingError)
     }
 
+    // Decode the URL and clean up any HTML entities that may have leaked through
+    // Changed: Clean up &amp; entities in case they made it through to the tracking URL
+    const decodedUrl = decodeURIComponent(url).replace(/&amp;/g, '&')
+
     // Redirect to the actual URL
-    return NextResponse.redirect(decodeURIComponent(url))
+    return NextResponse.redirect(decodedUrl)
 
   } catch (error) {
     console.error('Error in click tracking:', error)
@@ -76,7 +84,8 @@ export async function GET(request: NextRequest) {
       const fallbackUrl = searchParams.get('url')
       
       if (fallbackUrl) {
-        return NextResponse.redirect(decodeURIComponent(fallbackUrl))
+        const cleanedFallback = decodeURIComponent(fallbackUrl).replace(/&amp;/g, '&')
+        return NextResponse.redirect(cleanedFallback)
       }
     } catch (fallbackError) {
       console.error('Fallback redirect failed:', fallbackError)

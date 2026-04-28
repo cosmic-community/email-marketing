@@ -15,6 +15,8 @@ import { sendEmail, ResendRateLimitError } from "@/lib/resend";
 import { createUnsubscribeUrl, addTrackingToEmail, generatePreheaderHtml } from "@/lib/email-tracking";
 import { MarketingCampaign, EmailContact } from "@/types";
 
+export const dynamic = 'force-dynamic';
+
 // Rate limiting configuration optimized for MongoDB/Lambda
 // MAXIMUM SAFE SPEED - Optimized for ~60K emails/hour with 2-minute cron
 const EMAILS_PER_SECOND = 9; // 90% of 10/sec limit - aggressive but safe
@@ -376,7 +378,7 @@ export async function GET(request: NextRequest) {
           const scheduledTime = new Date(sendDate);
 
           console.log(
-            `📅 [SCHEDULE] Campaign "${campaign.metadata.name}" schedule check:`,
+            `📅 [SCHEDULE] Campaign \"${campaign.metadata.name}\" schedule check:`,
             {
               scheduledTime: scheduledTime.toISOString(),
               currentTime: now.toISOString(),
@@ -387,9 +389,9 @@ export async function GET(request: NextRequest) {
           // Only process if scheduled time has passed
           if (scheduledTime > now) {
             console.log(
-              `⏭️  [SKIP] "${
+              `⏭️  [SKIP] \"${
                 campaign.metadata.name
-              }" - scheduled for ${scheduledTime.toISOString()}`
+              }\" - scheduled for ${scheduledTime.toISOString()}`
             );
             continue;
           }
@@ -816,9 +818,9 @@ async function processCampaignBatch(
         if (campaign.metadata.public_sharing_enabled) {
           const viewInBrowserUrl = `${baseUrl}/public/campaigns/${campaign.id}`;
           const viewInBrowserLink = `
-            <div style="text-align: center; padding: 10px 0; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;">
-              <a href="${viewInBrowserUrl}" 
-                 style="color: #6b7280; font-size: 12px; text-decoration: underline;">
+            <div style=\"text-align: center; padding: 10px 0; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px;\">
+              <a href=\"${viewInBrowserUrl}\" 
+                 style=\"color: #6b7280; font-size: 12px; text-decoration: underline;\">
                 View this email in your browser
               </a>
             </div>
@@ -834,12 +836,12 @@ async function processCampaignBatch(
         );
 
         const unsubscribeFooter = `
-          <div style="margin-top: 40px; padding: 20px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #6b7280;">
-            <p style="margin: 0 0 10px 0;">
+          <div style=\"margin-top: 40px; padding: 20px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #6b7280;\">
+            <p style=\"margin: 0 0 10px 0;\">
               You received this email because you subscribed to our mailing list.
             </p>
-            <p style="margin: 0 0 10px 0;">
-              <a href="${unsubscribeUrl}" style="color: #6b7280; text-decoration: underline;">Unsubscribe</a> from future emails.
+            <p style=\"margin: 0 0 10px 0;\">
+              <a href=\"${unsubscribeUrl}\" style=\"color: #6b7280; text-decoration: underline;\">Unsubscribe</a> from future emails.
             </p>
           </div>
         `;

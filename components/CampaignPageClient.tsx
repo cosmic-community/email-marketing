@@ -23,6 +23,7 @@ import {
   ExternalLink as ExternalLinkIcon,
   BarChart3,
   Users as UsersIcon,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
@@ -80,6 +81,7 @@ export default function CampaignPageClient({
   const [isRefreshingStats, setIsRefreshingStats] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isExportingClicks, setIsExportingClicks] = useState(false);
 
   // Load more state for unsubscribes
   const [unsubscribesPage, setUnsubscribesPage] = useState(1);
@@ -209,6 +211,50 @@ export default function CampaignPageClient({
       console.error("Error loading more clicks:", JSON.stringify(error));
     } finally {
       setIsLoadingClicks(false);
+    }
+  };
+
+  const handleExportClicks = async () => {
+    setIsExportingClicks(true);
+    try {
+      const response = await fetch(
+        `/api/campaigns/${campaign.id}/clicks/export`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to export click events");
+      }
+
+      // Get filename from Content-Disposition header or use default
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = `campaign-${campaign.id}-clicks.csv`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      // Convert response to blob and trigger download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Error exporting clicks:", error);
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to export click events";
+      alert(errorMessage);
+    } finally {
+      setIsExportingClicks(false);
     }
   };
 
@@ -464,22 +510,39 @@ export default function CampaignPageClient({
           <div className="mt-8">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <MousePointerClick className="h-5 w-5 text-purple-500" />
-                  <span>Click Events</span>
-                  <span className="text-sm font-normal text-gray-500">
-                    (
-                    {clicksHasMore
-                      ? `${formatNumber(clicksData.length)} of ${formatNumber(
-                          clicksTotalCount
-                        )}`
-                      : formatNumber(clicksTotalCount)}
-                    )
-                  </span>
-                </CardTitle>
-                <p className="text-sm text-gray-600">
-                  Detailed click tracking for this campaign
-                </p>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <CardTitle className="flex items-center space-x-2">
+                      <MousePointerClick className="h-5 w-5 text-purple-500" />
+                      <span>Click Events</span>
+                      <span className="text-sm font-normal text-gray-500">
+                        (
+                        {clicksHasMore
+                          ? `${formatNumber(clicksData.length)} of ${formatNumber(
+                              clicksTotalCount
+                            )}`
+                          : formatNumber(clicksTotalCount)}
+                        )
+                      </span>
+                    </CardTitle>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Detailed click tracking for this campaign
+                    </p>
+                  </div>
+                  {/* Changed: Added Export CSV button */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleExportClicks}
+                    disabled={isExportingClicks}
+                    className="flex items-center space-x-1 flex-shrink-0"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>
+                      {isExportingClicks ? "Exporting..." : "Export CSV"}
+                    </span>
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">

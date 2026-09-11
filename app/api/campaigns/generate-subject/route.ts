@@ -45,7 +45,7 @@ IMPORTANT: Return ONLY the subject line text, no quotes, no explanation, no addi
 
       // Generate subject with Cosmic AI (non-streaming for simplicity) - include media_url if available
       const aiRequestOptions: any = {
-        model: 'claude-opus-4-8',
+        model: 'claude-opus-5',
         prompt: aiPrompt,
         max_tokens: 50,
         stream: false

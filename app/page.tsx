@@ -205,9 +205,9 @@ export default async function HomePage() {
         {/* Stats with enhanced visuals */}
         <div className="mb-8">
           <DashboardStats
-            contactsCount={contacts.length}
+            contactsCount={contactsResult.total}
             templatesCount={templates.length}
-            campaignssCount={campaigns.length}
+            campaignssCount={campaignsResult.total}
           />
         </div>
 

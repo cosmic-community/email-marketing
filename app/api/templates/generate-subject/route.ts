@@ -28,7 +28,7 @@ IMPORTANT: Return ONLY the subject line text, no quotes, no explanation, no addi
     try {
       // Generate subject with Cosmic AI (non-streaming for simplicity)
       const aiResponse = await cosmic.ai.generateText({
-        model: 'claude-opus-4-8',
+        model: 'claude-opus-5',
         prompt: aiPrompt,
         max_tokens: 50,
         stream: false

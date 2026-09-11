@@ -237,7 +237,7 @@ export async function POST(request: NextRequest) {
 
             // Generate content with Cosmic AI streaming - include media_url if available
             const aiRequestOptions: any = {
-              model: 'claude-opus-4-8',
+              model: 'claude-opus-5',
               prompt: aiPrompt,
               max_tokens: 60000,
               stream: true
